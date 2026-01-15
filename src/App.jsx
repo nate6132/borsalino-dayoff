@@ -7,12 +7,12 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 
-// your already-working approval email function URL:
+// Your Edge Function URL
 const APPROVAL_EMAIL_FUNCTION_URL =
   "https://qwaawlmfybjdnakwygsu.supabase.co/functions/v1/send-approval-email";
 
+// FullCalendar end is EXCLUSIVE; convert inclusive end_date by adding 1 day
 function addOneDayYYYYMMDD(dateStr) {
-  // dateStr: "YYYY-MM-DD"
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() + 1);
   const y = d.getFullYear();
@@ -25,36 +25,40 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // request form (matches your DB columns)
+  // employee request form
   const [start_date, setStartDate] = useState("");
   const [end_date, setEndDate] = useState("");
   const [reason, setReason] = useState("");
 
-  // all requests (admin sees all, users see theirs)
+  // all requests
   const [requests, setRequests] = useState([]);
 
-  // days tracking
-  const [daysInfo, setDaysInfo] = useState({ used: 0, allowance: 7, remaining: 7 });
+  // allowance info
+  const [daysInfo, setDaysInfo] = useState({
+    used: 0,
+    allowance: 14,
+    remaining: 14,
+  });
 
-  // ---------- AUTH ----------
+  // ---------------- AUTH ----------------
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      if (data.session) checkAdmin(data.session.user.id);
+      if (data.session) checkAdminAndAllowance(data.session.user.id);
     });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) checkAdmin(session.user.id);
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      if (newSession) checkAdminAndAllowance(newSession.user.id);
       else setIsAdmin(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  async function checkAdmin(userId) {
+  async function checkAdminAndAllowance(userId) {
     const { data, error } = await supabase
       .from("profiles")
       .select("is_admin, annual_allowance")
@@ -64,17 +68,16 @@ export default function App() {
     if (error) {
       console.log("PROFILE ERROR:", error);
       setIsAdmin(false);
+      setDaysInfo((prev) => ({ ...prev, allowance: 14, remaining: 14 }));
       return;
     }
 
     setIsAdmin(!!data?.is_admin);
-
-    // set allowance from profile if exists
-    const allowance = data?.annual_allowance ?? 7;
+    const allowance = data?.annual_allowance ?? 14;
     setDaysInfo((prev) => ({ ...prev, allowance }));
   }
 
-  // ---------- LOAD REQUESTS ----------
+  // ---------------- LOAD REQUESTS ----------------
   async function loadRequests() {
     const { data, error } = await supabase
       .from("day_off_requests")
@@ -85,7 +88,6 @@ export default function App() {
       console.log("LOAD ERROR:", error);
       return;
     }
-
     setRequests(data || []);
   }
 
@@ -93,29 +95,27 @@ export default function App() {
     if (session) loadRequests();
   }, [session]);
 
-  // ---------- DAYS USED / REMAINING ----------
+  // ---------------- DAYS USED / REMAINING ----------------
   async function refreshDaysInfo() {
     if (!session) return;
 
-    // get allowance from profiles (default 7)
     const { data: profile } = await supabase
       .from("profiles")
       .select("annual_allowance")
       .eq("id", session.user.id)
       .single();
 
-    const allowance = profile?.annual_allowance ?? 7;
+    const allowance = profile?.annual_allowance ?? 14;
     const year = new Date().getFullYear();
 
-    // get approved requests for this user
     const { data: approved, error } = await supabase
       .from("day_off_requests")
-      .select("start_date,end_date,status")
+      .select("start_date,end_date")
       .eq("user_id", session.user.id)
       .eq("status", "approved");
 
     if (error) {
-      console.log("DAYS FETCH ERROR:", error);
+      console.log("DAYS ERROR:", error);
       setDaysInfo({ used: 0, allowance, remaining: allowance });
       return;
     }
@@ -129,25 +129,20 @@ export default function App() {
         return sum + days;
       }, 0);
 
-    setDaysInfo({
-      used,
-      allowance,
-      remaining: allowance - used,
-    });
+    setDaysInfo({ used, allowance, remaining: allowance - used });
   }
 
-  // refresh days when requests change
   useEffect(() => {
     if (session) refreshDaysInfo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, requests.length]);
 
-  // ---------- SUBMIT REQUEST (ENFORCES 7 DAYS/YEAR IN DB) ----------
+  // ---------------- SUBMIT REQUEST (ENFORCES LIMIT IN DB) ----------------
   async function submitRequest() {
     if (!start_date || !end_date || !reason) return alert("Fill all fields");
     if (end_date < start_date) return alert("End date cannot be before start date");
 
-    // Calls your SQL function: request_day_off(p_start_date, p_end_date, p_reason)
+    // Use DB RPC (make sure your SQL function is updated for 14 days)
     const { data, error } = await supabase.rpc("request_day_off", {
       p_start_date: start_date,
       p_end_date: end_date,
@@ -175,7 +170,7 @@ export default function App() {
     await refreshDaysInfo();
   }
 
-  // ---------- ADMIN APPROVE/DENY + EMAIL ON APPROVE ----------
+  // ---------------- ADMIN APPROVE/DENY + EMAIL ----------------
   async function updateStatus(requestRow, newStatus) {
     const { error } = await supabase
       .from("day_off_requests")
@@ -188,12 +183,19 @@ export default function App() {
       return;
     }
 
-    // email on approval (no triggers)
+    // Email on approval
     if (newStatus === "approved") {
       try {
+        // ✅ get token for Authorization header
+        const { data: sess } = await supabase.auth.getSession();
+        const token = sess?.session?.access_token;
+
         const resp = await fetch(APPROVAL_EMAIL_FUNCTION_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({
             email: requestRow.email,
             start_date: requestRow.start_date,
@@ -204,7 +206,7 @@ export default function App() {
 
         if (!resp.ok) {
           const txt = await resp.text();
-          console.log("EMAIL FUNCTION ERROR:", txt);
+          console.log("EMAIL FAILED:", txt);
           alert("Approved, but email failed (check Edge Function logs).");
         }
       } catch (e) {
@@ -217,7 +219,7 @@ export default function App() {
     await refreshDaysInfo();
   }
 
-  // ---------- DERIVED LISTS ----------
+  // ---------------- DERIVED LISTS ----------------
   const myRequests = useMemo(() => {
     if (!session) return [];
     return requests.filter((r) => r.user_id === session.user.id);
@@ -228,7 +230,6 @@ export default function App() {
   }, [requests]);
 
   const approvedEvents = useMemo(() => {
-    // FullCalendar "end" is exclusive, so we add 1 day
     return requests
       .filter((r) => r.status === "approved")
       .map((r) => ({
@@ -239,7 +240,7 @@ export default function App() {
       }));
   }, [requests]);
 
-  // ---------- UI ----------
+  // ---------------- UI ----------------
   if (!session) {
     return (
       <div style={{ maxWidth: 420, margin: "60px auto" }}>
