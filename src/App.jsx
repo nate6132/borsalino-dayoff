@@ -7,11 +7,6 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 
-const APPROVAL_EMAIL_FUNCTION_URL =
-  "https://qwaawlmfybjdnakwygsu.supabase.co/functions/v1/send-approval-email";
-
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY; // ✅ needed for apikey header
-
 function addOneDayYYYYMMDD(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() + 1);
@@ -41,21 +36,21 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      if (data.session) checkAdminAndAllowance(data.session.user.id);
+      if (data.session) loadProfileStuff(data.session.user.id);
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
-      if (newSession) checkAdminAndAllowance(newSession.user.id);
+      if (newSession) loadProfileStuff(newSession.user.id);
       else setIsAdmin(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  async function checkAdminAndAllowance(userId) {
+  async function loadProfileStuff(userId) {
     const { data, error } = await supabase
       .from("profiles")
       .select("is_admin, annual_allowance")
@@ -85,7 +80,6 @@ export default function App() {
       console.log("LOAD ERROR:", error);
       return;
     }
-
     setRequests(data || []);
   }
 
@@ -106,17 +100,11 @@ export default function App() {
     const allowance = profile?.annual_allowance ?? 14;
     const year = new Date().getFullYear();
 
-    const { data: approved, error } = await supabase
+    const { data: approved } = await supabase
       .from("day_off_requests")
       .select("start_date,end_date")
       .eq("user_id", session.user.id)
       .eq("status", "approved");
-
-    if (error) {
-      console.log("DAYS ERROR:", error);
-      setDaysInfo({ used: 0, allowance, remaining: allowance });
-      return;
-    }
 
     const used = (approved || [])
       .filter((r) => new Date(r.start_date).getFullYear() === year)
@@ -146,11 +134,7 @@ export default function App() {
       p_reason: reason,
     });
 
-    if (error) {
-      console.log("RPC ERROR:", error);
-      alert(error.message);
-      return;
-    }
+    if (error) return alert(error.message);
 
     if (!data?.ok) {
       alert(
@@ -164,69 +148,63 @@ export default function App() {
     setEndDate("");
     setReason("");
     await loadRequests();
-    await refreshDaysInfo();
   }
 
-  // ---------- ADMIN APPROVE/DENY + EMAIL ----------
-  async function updateStatus(requestRow, newStatus) {
+  // ---------- USER CANCEL (only pending) ----------
+  async function cancelMyRequest(row) {
+    const ok = confirm("Cancel this request? (Only works if still pending)");
+    if (!ok) return;
+
     const { error } = await supabase
       .from("day_off_requests")
-      .update({ status: newStatus })
-      .eq("id", requestRow.id);
+      .update({ status: "cancelled" })
+      .eq("id", row.id);
 
     if (error) {
-      console.log("UPDATE ERROR:", error);
       alert(error.message);
       return;
     }
 
-    if (newStatus === "approved") {
-      try {
-        const { data: sess } = await supabase.auth.getSession();
-        const token = sess?.session?.access_token;
+    await loadRequests();
+  }
 
-        // ✅ Log what we’re sending (helps if token is missing)
-        console.log("EMAIL CALL token exists?", !!token);
+  // ---------- ADMIN UPDATE STATUS + EMAIL (approved/denied only) ----------
+  async function adminSetStatus(row, newStatus) {
+    const { error } = await supabase
+      .from("day_off_requests")
+      .update({ status: newStatus })
+      .eq("id", row.id);
 
-        const resp = await fetch(APPROVAL_EMAIL_FUNCTION_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: ANON_KEY, // ✅ important on hosted builds
-            Authorization: `Bearer ${token}`, // ✅ JWT
-          },
-          body: JSON.stringify({
-            email: requestRow.email,
-            start_date: requestRow.start_date,
-            end_date: requestRow.end_date,
-            status: "approved",
-          }),
-        });
+    if (error) {
+      alert(error.message);
+      return;
+    }
 
-        const text = await resp.text();
-        console.log("EMAIL FUNCTION HTTP:", resp.status, text);
+    // Send email for approved OR denied
+    if (newStatus === "approved" || newStatus === "denied") {
+      const { data, error: fnErr } = await supabase.functions.invoke("send-approval-email", {
+        body: {
+          email: row.email,
+          start_date: row.start_date,
+          end_date: row.end_date,
+          status: newStatus,
+        },
+      });
 
-        if (!resp.ok) {
-          alert("Approved, but email failed. Check Edge Function logs.");
-        }
-      } catch (e) {
-        console.log("EMAIL CRASH:", e);
-        alert("Approved, but email failed (check console).");
-      }
+      console.log("EMAIL FN:", data, fnErr);
+      if (fnErr) alert("Status updated, but email failed (check function logs).");
     }
 
     await loadRequests();
-    await refreshDaysInfo();
   }
 
+  // ---------- DERIVED LISTS ----------
   const myRequests = useMemo(() => {
     if (!session) return [];
     return requests.filter((r) => r.user_id === session.user.id);
   }, [requests, session]);
 
-  const pendingRequests = useMemo(() => {
-    return requests.filter((r) => r.status === "pending");
-  }, [requests]);
+  const pendingRequests = useMemo(() => requests.filter((r) => r.status === "pending"), [requests]);
 
   const approvedEvents = useMemo(() => {
     return requests
@@ -239,6 +217,7 @@ export default function App() {
       }));
   }, [requests]);
 
+  // ---------- UI ----------
   if (!session) {
     return (
       <div style={{ maxWidth: 420, margin: "60px auto" }}>
@@ -269,7 +248,6 @@ export default function App() {
                 <div>Start date</div>
                 <input type="date" value={start_date} onChange={(e) => setStartDate(e.target.value)} />
               </div>
-
               <div>
                 <div>End date</div>
                 <input type="date" value={end_date} onChange={(e) => setEndDate(e.target.value)} />
@@ -282,7 +260,6 @@ export default function App() {
                 style={{ width: "100%", minHeight: 80 }}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="Why do you need time off?"
               />
             </div>
 
@@ -291,18 +268,28 @@ export default function App() {
             </button>
           </div>
 
-          <div>
-            <h3>My Requests</h3>
-            {myRequests.length === 0 ? (
-              <p>No requests yet.</p>
-            ) : (
-              myRequests.map((r) => (
-                <div key={r.id} style={{ borderBottom: "1px solid #eee", padding: 8 }}>
-                  <b>{r.start_date}</b> → <b>{r.end_date}</b> — {r.reason} — <b>{r.status}</b>
+          <h3>My Requests</h3>
+          {myRequests.length === 0 ? (
+            <p>No requests yet.</p>
+          ) : (
+            myRequests.map((r) => (
+              <div key={r.id} style={{ borderBottom: "1px solid #eee", padding: 10 }}>
+                <div>
+                  <b>{r.start_date}</b> → <b>{r.end_date}</b>
                 </div>
-              ))
-            )}
-          </div>
+                <div>Reason: {r.reason}</div>
+                <div>
+                  Status: <b>{r.status}</b>
+                </div>
+
+                {r.status === "pending" && (
+                  <button style={{ marginTop: 6 }} onClick={() => cancelMyRequest(r)}>
+                    Cancel request
+                  </button>
+                )}
+              </div>
+            ))
+          )}
         </>
       )}
 
@@ -320,32 +307,48 @@ export default function App() {
             </div>
           </div>
 
-          <div>
-            <h3>Pending Requests</h3>
-            {pendingRequests.length === 0 ? (
-              <p>No pending requests.</p>
-            ) : (
-              pendingRequests.map((r) => (
-                <div key={r.id} style={{ border: "1px solid #ccc", padding: 12, marginBottom: 10 }}>
-                  <div>
-                    <b>{r.email}</b>
-                  </div>
-                  <div>
-                    <b>{r.start_date}</b> → <b>{r.end_date}</b>
-                  </div>
-                  <div>Reason: {r.reason}</div>
-                  <div>
-                    Status: <b>{r.status}</b>
-                  </div>
+          <h3>Pending Requests</h3>
+          {pendingRequests.length === 0 ? (
+            <p>No pending requests.</p>
+          ) : (
+            pendingRequests.map((r) => (
+              <div key={r.id} style={{ border: "1px solid #ccc", padding: 12, marginBottom: 10 }}>
+                <div><b>{r.email}</b></div>
+                <div><b>{r.start_date}</b> → <b>{r.end_date}</b></div>
+                <div>Reason: {r.reason}</div>
+                <div>Status: <b>{r.status}</b></div>
 
-                  <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-                    <button onClick={() => updateStatus(r, "approved")}>Approve</button>
-                    <button onClick={() => updateStatus(r, "denied")}>Deny</button>
+                <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                  <button onClick={() => adminSetStatus(r, "approved")}>Approve</button>
+                  <button onClick={() => adminSetStatus(r, "denied")}>Deny</button>
+                </div>
+              </div>
+            ))
+          )}
+
+          <h3 style={{ marginTop: 25 }}>Already Approved (Admin can revoke)</h3>
+          {requests.filter((r) => r.status === "approved").length === 0 ? (
+            <p>No approved requests yet.</p>
+          ) : (
+            requests
+              .filter((r) => r.status === "approved")
+              .map((r) => (
+                <div key={r.id} style={{ border: "1px solid #eee", padding: 10, marginBottom: 8 }}>
+                  <div><b>{r.email}</b></div>
+                  <div><b>{r.start_date}</b> → <b>{r.end_date}</b></div>
+                  <div>Status: <b>{r.status}</b></div>
+
+                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                    <button onClick={() => adminSetStatus(r, "revoked")}>
+                      Revoke approval
+                    </button>
+                    <button onClick={() => adminSetStatus(r, "denied")}>
+                      Change to denied
+                    </button>
                   </div>
                 </div>
               ))
-            )}
-          </div>
+          )}
         </>
       )}
     </div>
