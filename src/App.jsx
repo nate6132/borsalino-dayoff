@@ -7,6 +7,7 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 
+// FullCalendar end is exclusive; convert inclusive end_date by adding 1 day
 function addOneDayYYYYMMDD(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() + 1);
@@ -16,7 +17,21 @@ function addOneDayYYYYMMDD(dateStr) {
   return `${y}-${m}-${day}`;
 }
 
-// ---------- simple, clean UI helpers ----------
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+// Uses profile name if available, otherwise first part of email
+function makeDisplayName(profileName, email) {
+  if (profileName && profileName.trim().length > 0) return profileName.trim();
+  if (!email) return "";
+  const left = email.split("@")[0] || "";
+  return left.charAt(0).toUpperCase() + left.slice(1);
+}
+
 const styles = {
   page: {
     minHeight: "100vh",
@@ -38,18 +53,14 @@ const styles = {
     gap: 12,
     padding: "16px 18px",
     borderRadius: 16,
-    background: "rgba(255,255,255,0.8)",
+    background: "rgba(255,255,255,0.85)",
     border: "1px solid rgba(15, 23, 42, 0.08)",
     boxShadow: "0 12px 30px rgba(2, 6, 23, 0.06)",
     backdropFilter: "blur(10px)",
     marginBottom: 18,
   },
-  brand: {
-    display: "flex",
-    flexDirection: "column",
-    lineHeight: 1.1,
-  },
-  title: { margin: 0, fontSize: 20, fontWeight: 800, letterSpacing: "-0.02em" },
+  brand: { display: "flex", flexDirection: "column", lineHeight: 1.1 },
+  title: { margin: 0, fontSize: 20, fontWeight: 900, letterSpacing: "-0.02em" },
   subtitle: { margin: 0, fontSize: 13, color: "#475569", marginTop: 4 },
   badge: {
     fontSize: 12,
@@ -58,7 +69,7 @@ const styles = {
     border: "1px solid rgba(15, 23, 42, 0.10)",
     background: "rgba(15, 23, 42, 0.04)",
     color: "#0f172a",
-    fontWeight: 600,
+    fontWeight: 700,
   },
   card: {
     borderRadius: 16,
@@ -75,11 +86,10 @@ const styles = {
     gap: 10,
     marginBottom: 10,
   },
-  cardTitle: { margin: 0, fontSize: 16, fontWeight: 800, letterSpacing: "-0.01em" },
+  cardTitle: { margin: 0, fontSize: 16, fontWeight: 900, letterSpacing: "-0.01em" },
   muted: { color: "#64748b", fontSize: 13 },
   grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
-  grid1: { display: "grid", gridTemplateColumns: "1fr", gap: 12 },
-  label: { fontSize: 12, fontWeight: 700, color: "#334155", marginBottom: 6 },
+  label: { fontSize: 12, fontWeight: 800, color: "#334155", marginBottom: 6 },
   input: {
     width: "100%",
     padding: "10px 12px",
@@ -107,7 +117,7 @@ const styles = {
     border: "1px solid rgba(15, 23, 42, 0.12)",
     background: "white",
     cursor: "pointer",
-    fontWeight: 700,
+    fontWeight: 800,
     fontSize: 14,
   },
   btnPrimary: {
@@ -117,7 +127,7 @@ const styles = {
     background: "linear-gradient(180deg, rgba(99,102,241,1), rgba(79,70,229,1))",
     color: "white",
     cursor: "pointer",
-    fontWeight: 800,
+    fontWeight: 900,
     fontSize: 14,
     boxShadow: "0 10px 18px rgba(79,70,229,0.25)",
   },
@@ -128,7 +138,7 @@ const styles = {
     background: "rgba(239,68,68,0.08)",
     color: "#b91c1c",
     cursor: "pointer",
-    fontWeight: 800,
+    fontWeight: 900,
     fontSize: 14,
   },
   btnWarn: {
@@ -138,7 +148,7 @@ const styles = {
     background: "rgba(245,158,11,0.10)",
     color: "#92400e",
     cursor: "pointer",
-    fontWeight: 800,
+    fontWeight: 900,
     fontSize: 14,
   },
   pill: {
@@ -151,13 +161,9 @@ const styles = {
     background: "rgba(15, 23, 42, 0.04)",
     fontSize: 13,
     color: "#0f172a",
-    fontWeight: 700,
+    fontWeight: 800,
   },
-  divider: {
-    height: 1,
-    background: "rgba(15, 23, 42, 0.08)",
-    margin: "12px 0",
-  },
+  divider: { height: 1, background: "rgba(15, 23, 42, 0.08)", margin: "12px 0" },
   listItem: {
     padding: "12px 12px",
     borderRadius: 14,
@@ -174,8 +180,9 @@ const styles = {
       padding: "6px 10px",
       borderRadius: 999,
       fontSize: 12,
-      fontWeight: 800,
+      fontWeight: 900,
       border: "1px solid rgba(15, 23, 42, 0.10)",
+      textTransform: "capitalize",
     };
     if (s === "approved") return { ...base, background: "rgba(16,185,129,0.12)", color: "#065f46" };
     if (s === "denied") return { ...base, background: "rgba(239,68,68,0.12)", color: "#991b1b" };
@@ -189,6 +196,8 @@ const styles = {
 export default function App() {
   const [session, setSession] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
+
+  const [profileName, setProfileName] = useState("");
 
   const [start_date, setStartDate] = useState("");
   const [end_date, setEndDate] = useState("");
@@ -209,7 +218,10 @@ export default function App() {
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
       if (newSession) loadProfileStuff(newSession.user.id);
-      else setIsAdmin(false);
+      else {
+        setIsAdmin(false);
+        setProfileName("");
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -218,18 +230,21 @@ export default function App() {
   async function loadProfileStuff(userId) {
     const { data, error } = await supabase
       .from("profiles")
-      .select("is_admin, annual_allowance")
+      .select("is_admin, annual_allowance, name")
       .eq("id", userId)
       .single();
 
     if (error) {
       console.log("PROFILE ERROR:", error);
       setIsAdmin(false);
+      setProfileName("");
       setDaysInfo((prev) => ({ ...prev, allowance: 14, remaining: 14 }));
       return;
     }
 
     setIsAdmin(!!data?.is_admin);
+    setProfileName(data?.name || "");
+
     const allowance = data?.annual_allowance ?? 14;
     setDaysInfo((prev) => ({ ...prev, allowance }));
   }
@@ -374,6 +389,7 @@ export default function App() {
       }));
   }, [requests]);
 
+  // ---------- AUTH SCREEN ----------
   if (!session) {
     return (
       <div style={styles.page}>
@@ -394,15 +410,30 @@ export default function App() {
     );
   }
 
+  const displayName = makeDisplayName(profileName, session.user.email);
+
+  // ---------- APP ----------
   return (
     <div style={styles.page}>
       <div style={styles.container}>
+        {/* TOP BAR */}
         <div style={styles.topbar}>
-          <div style={styles.brand}>
-            <h1 style={styles.title}>Borsalino Time Off</h1>
-            <p style={styles.subtitle}>
-              {isAdmin ? "Admin dashboard" : "Request and track your time off"}
-            </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            {/* Put your logo file at: /public/logo.png */}
+            <img
+              src="/logo.png"
+              alt="Borsalino logo"
+              style={{ height: 44, width: "auto", borderRadius: 10 }}
+            />
+
+            <div style={styles.brand}>
+              <h1 style={styles.title}>
+                {getGreeting()}, {displayName}
+              </h1>
+              <p style={styles.subtitle}>
+                {isAdmin ? "Admin dashboard" : "Request and track your time off"}
+              </p>
+            </div>
           </div>
 
           <div style={styles.row}>
@@ -413,7 +444,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* EMPLOYEE */}
+        {/* EMPLOYEE VIEW */}
         {!isAdmin && (
           <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 14 }}>
             <div style={styles.card}>
@@ -478,7 +509,7 @@ export default function App() {
                   {myRequests.map((r) => (
                     <div key={r.id} style={styles.listItem}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                        <div style={{ fontWeight: 800 }}>
+                        <div style={{ fontWeight: 900 }}>
                           {r.start_date} → {r.end_date}
                         </div>
                         <span style={styles.status(r.status)}>{r.status}</span>
@@ -499,7 +530,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ADMIN */}
+        {/* ADMIN VIEW */}
         {isAdmin && (
           <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 14 }}>
             <div style={styles.card}>
@@ -530,11 +561,10 @@ export default function App() {
                   {pendingRequests.map((r) => (
                     <div key={r.id} style={styles.listItem}>
                       <div style={{ fontWeight: 900 }}>{r.email}</div>
-                      <div style={{ fontWeight: 800 }}>
+                      <div style={{ fontWeight: 900 }}>
                         {r.start_date} → {r.end_date}
                       </div>
                       <div style={{ color: "#334155", fontSize: 13 }}>{r.reason}</div>
-
                       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                         <button style={styles.btnPrimary} onClick={() => adminSetStatus(r, "approved")}>
                           Approve
@@ -552,9 +582,7 @@ export default function App() {
 
               <div style={styles.cardTitleRow}>
                 <h3 style={styles.cardTitle}>Approved (revoke)</h3>
-                <span style={styles.muted}>
-                  {requests.filter((r) => r.status === "approved").length}
-                </span>
+                <span style={styles.muted}>{requests.filter((r) => r.status === "approved").length}</span>
               </div>
 
               {requests.filter((r) => r.status === "approved").length === 0 ? (
@@ -563,11 +591,11 @@ export default function App() {
                 <div style={{ display: "grid", gap: 10 }}>
                   {requests
                     .filter((r) => r.status === "approved")
-                    .slice(0, 8)
+                    .slice(0, 10)
                     .map((r) => (
                       <div key={r.id} style={styles.listItem}>
                         <div style={{ fontWeight: 900 }}>{r.email}</div>
-                        <div style={{ fontWeight: 800 }}>
+                        <div style={{ fontWeight: 900 }}>
                           {r.start_date} → {r.end_date}
                         </div>
                         <div style={{ display: "flex", justifyContent: "flex-end" }}>
