@@ -181,19 +181,20 @@ export default function App() {
     }
 
     // Send email for approved OR denied
-    if (newStatus === "approved" || newStatus === "denied") {
-      const { data, error: fnErr } = await supabase.functions.invoke("send-approval-email", {
-        body: {
-          email: row.email,
-          start_date: row.start_date,
-          end_date: row.end_date,
-          status: newStatus,
-        },
-      });
+    if (["approved", "denied", "revoked"].includes(newStatus)) {
+  const { data, error: fnErr } = await supabase.functions.invoke("send-approval-email", {
+    body: {
+      email: row.email,
+      start_date: row.start_date,
+      end_date: row.end_date,
+      status: newStatus, // will be "revoked"
+    },
+  });
 
-      console.log("EMAIL FN:", data, fnErr);
-      if (fnErr) alert("Status updated, but email failed (check function logs).");
-    }
+  console.log("EMAIL INVOKE:", newStatus, data, fnErr);
+
+  if (fnErr) alert(`Status updated to ${newStatus}, but email failed. Check function logs.`);
+}
 
     await loadRequests();
   }
