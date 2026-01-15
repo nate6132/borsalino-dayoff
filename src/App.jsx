@@ -400,7 +400,7 @@ export default function App() {
     paddingRight: "env(safe-area-inset-right)",
     overflowX: "hidden",
   }}
->overflowX: "hidden"
+>"
         <div style={{ ...styles.container, maxWidth: 460, paddingTop: 80 }}>
           <div style={styles.card}>
             <div style={{ marginBottom: 10 }}>
