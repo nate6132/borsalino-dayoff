@@ -7,11 +7,11 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 
-// Your Edge Function URL
 const APPROVAL_EMAIL_FUNCTION_URL =
   "https://qwaawlmfybjdnakwygsu.supabase.co/functions/v1/send-approval-email";
 
-// FullCalendar end is EXCLUSIVE; convert inclusive end_date by adding 1 day
+const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY; // ✅ needed for apikey header
+
 function addOneDayYYYYMMDD(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() + 1);
@@ -25,22 +25,19 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // employee request form
   const [start_date, setStartDate] = useState("");
   const [end_date, setEndDate] = useState("");
   const [reason, setReason] = useState("");
 
-  // all requests
   const [requests, setRequests] = useState([]);
 
-  // allowance info
   const [daysInfo, setDaysInfo] = useState({
     used: 0,
     allowance: 14,
     remaining: 14,
   });
 
-  // ---------------- AUTH ----------------
+  // ---------- AUTH ----------
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -77,7 +74,7 @@ export default function App() {
     setDaysInfo((prev) => ({ ...prev, allowance }));
   }
 
-  // ---------------- LOAD REQUESTS ----------------
+  // ---------- LOAD REQUESTS ----------
   async function loadRequests() {
     const { data, error } = await supabase
       .from("day_off_requests")
@@ -88,6 +85,7 @@ export default function App() {
       console.log("LOAD ERROR:", error);
       return;
     }
+
     setRequests(data || []);
   }
 
@@ -95,7 +93,7 @@ export default function App() {
     if (session) loadRequests();
   }, [session]);
 
-  // ---------------- DAYS USED / REMAINING ----------------
+  // ---------- DAYS USED / REMAINING ----------
   async function refreshDaysInfo() {
     if (!session) return;
 
@@ -125,7 +123,7 @@ export default function App() {
       .reduce((sum, r) => {
         const s = new Date(r.start_date + "T00:00:00");
         const e = new Date(r.end_date + "T00:00:00");
-        const days = Math.floor((e - s) / (1000 * 60 * 60 * 24)) + 1; // inclusive
+        const days = Math.floor((e - s) / (1000 * 60 * 60 * 24)) + 1;
         return sum + days;
       }, 0);
 
@@ -137,12 +135,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, requests.length]);
 
-  // ---------------- SUBMIT REQUEST (ENFORCES LIMIT IN DB) ----------------
+  // ---------- SUBMIT REQUEST ----------
   async function submitRequest() {
     if (!start_date || !end_date || !reason) return alert("Fill all fields");
     if (end_date < start_date) return alert("End date cannot be before start date");
 
-    // Use DB RPC (make sure your SQL function is updated for 14 days)
     const { data, error } = await supabase.rpc("request_day_off", {
       p_start_date: start_date,
       p_end_date: end_date,
@@ -170,7 +167,7 @@ export default function App() {
     await refreshDaysInfo();
   }
 
-  // ---------------- ADMIN APPROVE/DENY + EMAIL ----------------
+  // ---------- ADMIN APPROVE/DENY + EMAIL ----------
   async function updateStatus(requestRow, newStatus) {
     const { error } = await supabase
       .from("day_off_requests")
@@ -183,18 +180,20 @@ export default function App() {
       return;
     }
 
-    // Email on approval
     if (newStatus === "approved") {
       try {
-        // ✅ get token for Authorization header
         const { data: sess } = await supabase.auth.getSession();
         const token = sess?.session?.access_token;
+
+        // ✅ Log what we’re sending (helps if token is missing)
+        console.log("EMAIL CALL token exists?", !!token);
 
         const resp = await fetch(APPROVAL_EMAIL_FUNCTION_URL, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
+            apikey: ANON_KEY, // ✅ important on hosted builds
+            Authorization: `Bearer ${token}`, // ✅ JWT
           },
           body: JSON.stringify({
             email: requestRow.email,
@@ -204,10 +203,11 @@ export default function App() {
           }),
         });
 
+        const text = await resp.text();
+        console.log("EMAIL FUNCTION HTTP:", resp.status, text);
+
         if (!resp.ok) {
-          const txt = await resp.text();
-          console.log("EMAIL FAILED:", txt);
-          alert("Approved, but email failed (check Edge Function logs).");
+          alert("Approved, but email failed. Check Edge Function logs.");
         }
       } catch (e) {
         console.log("EMAIL CRASH:", e);
@@ -219,7 +219,6 @@ export default function App() {
     await refreshDaysInfo();
   }
 
-  // ---------------- DERIVED LISTS ----------------
   const myRequests = useMemo(() => {
     if (!session) return [];
     return requests.filter((r) => r.user_id === session.user.id);
@@ -240,7 +239,6 @@ export default function App() {
       }));
   }, [requests]);
 
-  // ---------------- UI ----------------
   if (!session) {
     return (
       <div style={{ maxWidth: 420, margin: "60px auto" }}>
@@ -256,7 +254,6 @@ export default function App() {
         <button onClick={() => supabase.auth.signOut()}>Logout</button>
       </div>
 
-      {/* EMPLOYEE VIEW */}
       {!isAdmin && (
         <>
           <div style={{ border: "1px solid #ddd", padding: 12, marginBottom: 20 }}>
@@ -270,20 +267,12 @@ export default function App() {
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <div>
                 <div>Start date</div>
-                <input
-                  type="date"
-                  value={start_date}
-                  onChange={(e) => setStartDate(e.target.value)}
-                />
+                <input type="date" value={start_date} onChange={(e) => setStartDate(e.target.value)} />
               </div>
 
               <div>
                 <div>End date</div>
-                <input
-                  type="date"
-                  value={end_date}
-                  onChange={(e) => setEndDate(e.target.value)}
-                />
+                <input type="date" value={end_date} onChange={(e) => setEndDate(e.target.value)} />
               </div>
             </div>
 
@@ -309,8 +298,7 @@ export default function App() {
             ) : (
               myRequests.map((r) => (
                 <div key={r.id} style={{ borderBottom: "1px solid #eee", padding: 8 }}>
-                  <b>{r.start_date}</b> → <b>{r.end_date}</b> — {r.reason} —{" "}
-                  <b>{r.status}</b>
+                  <b>{r.start_date}</b> → <b>{r.end_date}</b> — {r.reason} — <b>{r.status}</b>
                 </div>
               ))
             )}
@@ -318,7 +306,6 @@ export default function App() {
         </>
       )}
 
-      {/* ADMIN VIEW */}
       {isAdmin && (
         <>
           <div style={{ marginTop: 20, marginBottom: 20 }}>
@@ -339,14 +326,7 @@ export default function App() {
               <p>No pending requests.</p>
             ) : (
               pendingRequests.map((r) => (
-                <div
-                  key={r.id}
-                  style={{
-                    border: "1px solid #ccc",
-                    padding: 12,
-                    marginBottom: 10,
-                  }}
-                >
+                <div key={r.id} style={{ border: "1px solid #ccc", padding: 12, marginBottom: 10 }}>
                   <div>
                     <b>{r.email}</b>
                   </div>
