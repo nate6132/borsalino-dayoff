@@ -398,6 +398,7 @@ export default function App() {
     paddingBottom: "env(safe-area-inset-bottom)",
     paddingLeft: "env(safe-area-inset-left)",
     paddingRight: "env(safe-area-inset-right)",
+    overflowX: "hidden",
   }}
 >overflowX: "hidden"
         <div style={{ ...styles.container, maxWidth: 460, paddingTop: 80 }}>
