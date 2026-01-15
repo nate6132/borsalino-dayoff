@@ -391,7 +391,15 @@ export default function App() {
   // ---------- AUTH SCREEN ----------
   if (!session) {
     return (
-      <div style={styles.page}>
+      <div
+  style={{
+    ...styles.app,
+    paddingTop: "env(safe-area-inset-top)",
+    paddingBottom: "env(safe-area-inset-bottom)",
+    paddingLeft: "env(safe-area-inset-left)",
+    paddingRight: "env(safe-area-inset-right)",
+  }}
+>overflowX: "hidden"
         <div style={{ ...styles.container, maxWidth: 460, paddingTop: 80 }}>
           <div style={styles.card}>
             <div style={{ marginBottom: 10 }}>
