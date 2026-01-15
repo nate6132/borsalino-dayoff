@@ -16,6 +16,176 @@ function addOneDayYYYYMMDD(dateStr) {
   return `${y}-${m}-${day}`;
 }
 
+// ---------- simple, clean UI helpers ----------
+const styles = {
+  page: {
+    minHeight: "100vh",
+    background:
+      "radial-gradient(1200px 600px at 20% 0%, rgba(99,102,241,0.12), transparent 60%), radial-gradient(900px 500px at 80% 10%, rgba(16,185,129,0.10), transparent 55%), #f8fafc",
+    fontFamily:
+      'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"',
+    color: "#0f172a",
+  },
+  container: {
+    maxWidth: 1100,
+    margin: "0 auto",
+    padding: "28px 18px 60px",
+  },
+  topbar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "16px 18px",
+    borderRadius: 16,
+    background: "rgba(255,255,255,0.8)",
+    border: "1px solid rgba(15, 23, 42, 0.08)",
+    boxShadow: "0 12px 30px rgba(2, 6, 23, 0.06)",
+    backdropFilter: "blur(10px)",
+    marginBottom: 18,
+  },
+  brand: {
+    display: "flex",
+    flexDirection: "column",
+    lineHeight: 1.1,
+  },
+  title: { margin: 0, fontSize: 20, fontWeight: 800, letterSpacing: "-0.02em" },
+  subtitle: { margin: 0, fontSize: 13, color: "#475569", marginTop: 4 },
+  badge: {
+    fontSize: 12,
+    padding: "6px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(15, 23, 42, 0.10)",
+    background: "rgba(15, 23, 42, 0.04)",
+    color: "#0f172a",
+    fontWeight: 600,
+  },
+  card: {
+    borderRadius: 16,
+    background: "rgba(255,255,255,0.9)",
+    border: "1px solid rgba(15, 23, 42, 0.08)",
+    boxShadow: "0 12px 30px rgba(2, 6, 23, 0.06)",
+    padding: 16,
+    backdropFilter: "blur(10px)",
+  },
+  cardTitleRow: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 10,
+  },
+  cardTitle: { margin: 0, fontSize: 16, fontWeight: 800, letterSpacing: "-0.01em" },
+  muted: { color: "#64748b", fontSize: 13 },
+  grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+  grid1: { display: "grid", gridTemplateColumns: "1fr", gap: 12 },
+  label: { fontSize: 12, fontWeight: 700, color: "#334155", marginBottom: 6 },
+  input: {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(15, 23, 42, 0.12)",
+    background: "white",
+    outline: "none",
+    fontSize: 14,
+  },
+  textarea: {
+    width: "100%",
+    minHeight: 90,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(15, 23, 42, 0.12)",
+    background: "white",
+    outline: "none",
+    fontSize: 14,
+    resize: "vertical",
+  },
+  row: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
+  btn: {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(15, 23, 42, 0.12)",
+    background: "white",
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: 14,
+  },
+  btnPrimary: {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(79,70,229,0.25)",
+    background: "linear-gradient(180deg, rgba(99,102,241,1), rgba(79,70,229,1))",
+    color: "white",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: 14,
+    boxShadow: "0 10px 18px rgba(79,70,229,0.25)",
+  },
+  btnDanger: {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(239,68,68,0.25)",
+    background: "rgba(239,68,68,0.08)",
+    color: "#b91c1c",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: 14,
+  },
+  btnWarn: {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(245,158,11,0.25)",
+    background: "rgba(245,158,11,0.10)",
+    color: "#92400e",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: 14,
+  },
+  pill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(15, 23, 42, 0.10)",
+    background: "rgba(15, 23, 42, 0.04)",
+    fontSize: 13,
+    color: "#0f172a",
+    fontWeight: 700,
+  },
+  divider: {
+    height: 1,
+    background: "rgba(15, 23, 42, 0.08)",
+    margin: "12px 0",
+  },
+  listItem: {
+    padding: "12px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(15, 23, 42, 0.08)",
+    background: "rgba(255,255,255,0.75)",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  status: (s) => {
+    const base = {
+      display: "inline-flex",
+      alignItems: "center",
+      padding: "6px 10px",
+      borderRadius: 999,
+      fontSize: 12,
+      fontWeight: 800,
+      border: "1px solid rgba(15, 23, 42, 0.10)",
+    };
+    if (s === "approved") return { ...base, background: "rgba(16,185,129,0.12)", color: "#065f46" };
+    if (s === "denied") return { ...base, background: "rgba(239,68,68,0.12)", color: "#991b1b" };
+    if (s === "pending") return { ...base, background: "rgba(99,102,241,0.12)", color: "#3730a3" };
+    if (s === "cancelled") return { ...base, background: "rgba(148,163,184,0.20)", color: "#334155" };
+    if (s === "revoked") return { ...base, background: "rgba(245,158,11,0.15)", color: "#92400e" };
+    return base;
+  },
+};
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -25,12 +195,7 @@ export default function App() {
   const [reason, setReason] = useState("");
 
   const [requests, setRequests] = useState([]);
-
-  const [daysInfo, setDaysInfo] = useState({
-    used: 0,
-    allowance: 14,
-    remaining: 14,
-  });
+  const [daysInfo, setDaysInfo] = useState({ used: 0, allowance: 14, remaining: 14 });
 
   // ---------- AUTH ----------
   useEffect(() => {
@@ -143,14 +308,13 @@ export default function App() {
       return;
     }
 
-    alert("Request sent!");
     setStartDate("");
     setEndDate("");
     setReason("");
     await loadRequests();
   }
 
-  // ---------- USER CANCEL (only pending) ----------
+  // ---------- USER CANCEL ----------
   async function cancelMyRequest(row) {
     const ok = confirm("Cancel this request? (Only works if still pending)");
     if (!ok) return;
@@ -160,46 +324,38 @@ export default function App() {
       .update({ status: "cancelled" })
       .eq("id", row.id);
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
+    if (error) return alert(error.message);
     await loadRequests();
   }
 
-  // ---------- ADMIN UPDATE STATUS + EMAIL (approved/denied only) ----------
+  // ---------- ADMIN UPDATE STATUS + EMAIL ----------
   async function adminSetStatus(row, newStatus) {
     const { error } = await supabase
       .from("day_off_requests")
       .update({ status: newStatus })
       .eq("id", row.id);
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
+    if (error) return alert(error.message);
 
-    // Send email for approved OR denied
+    // Email on approved/denied/revoked
     if (["approved", "denied", "revoked"].includes(newStatus)) {
-  const { data, error: fnErr } = await supabase.functions.invoke("send-approval-email", {
-    body: {
-      email: row.email,
-      start_date: row.start_date,
-      end_date: row.end_date,
-      status: newStatus, // will be "revoked"
-    },
-  });
+      const { data, error: fnErr } = await supabase.functions.invoke("send-approval-email", {
+        body: {
+          email: row.email,
+          start_date: row.start_date,
+          end_date: row.end_date,
+          status: newStatus,
+        },
+      });
 
-  console.log("EMAIL INVOKE:", newStatus, data, fnErr);
-
-  if (fnErr) alert(`Status updated to ${newStatus}, but email failed. Check function logs.`);
-}
+      console.log("EMAIL INVOKE:", newStatus, data, fnErr);
+      if (fnErr) alert(`Status updated to ${newStatus}, but email failed (check function logs).`);
+    }
 
     await loadRequests();
   }
 
-  // ---------- DERIVED LISTS ----------
+  // ---------- DERIVED ----------
   const myRequests = useMemo(() => {
     if (!session) return [];
     return requests.filter((r) => r.user_id === session.user.id);
@@ -218,140 +374,219 @@ export default function App() {
       }));
   }, [requests]);
 
-  // ---------- UI ----------
   if (!session) {
     return (
-      <div style={{ maxWidth: 420, margin: "60px auto" }}>
-        <Auth supabaseClient={supabase} appearance={{ theme: ThemeSupa }} />
+      <div style={styles.page}>
+        <div style={{ ...styles.container, maxWidth: 460, paddingTop: 80 }}>
+          <div style={styles.card}>
+            <div style={{ marginBottom: 10 }}>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 900, letterSpacing: "-0.02em" }}>
+                Welcome 👋
+              </h2>
+              <p style={{ margin: "6px 0 0", color: "#64748b", fontSize: 14 }}>
+                Sign in to request time off and view your status.
+              </p>
+            </div>
+            <Auth supabaseClient={supabase} appearance={{ theme: ThemeSupa }} />
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: 20, maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2>Borsalino Day Off</h2>
-        <button onClick={() => supabase.auth.signOut()}>Logout</button>
-      </div>
-
-      {!isAdmin && (
-        <>
-          <div style={{ border: "1px solid #ddd", padding: 12, marginBottom: 20 }}>
-            <h3>Request Day Off</h3>
-
-            <p>
-              Days used: <b>{daysInfo.used}</b> / {daysInfo.allowance} — Remaining:{" "}
-              <b>{daysInfo.remaining}</b>
+    <div style={styles.page}>
+      <div style={styles.container}>
+        <div style={styles.topbar}>
+          <div style={styles.brand}>
+            <h1 style={styles.title}>Borsalino Time Off</h1>
+            <p style={styles.subtitle}>
+              {isAdmin ? "Admin dashboard" : "Request and track your time off"}
             </p>
+          </div>
 
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <div>
-                <div>Start date</div>
-                <input type="date" value={start_date} onChange={(e) => setStartDate(e.target.value)} />
-              </div>
-              <div>
-                <div>End date</div>
-                <input type="date" value={end_date} onChange={(e) => setEndDate(e.target.value)} />
-              </div>
-            </div>
-
-            <div style={{ marginTop: 10 }}>
-              <div>Reason</div>
-              <textarea
-                style={{ width: "100%", minHeight: 80 }}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-              />
-            </div>
-
-            <button style={{ marginTop: 10 }} onClick={submitRequest}>
-              Submit
+          <div style={styles.row}>
+            <span style={styles.badge}>{isAdmin ? "Admin" : "Employee"}</span>
+            <button style={styles.btn} onClick={() => supabase.auth.signOut()}>
+              Log out
             </button>
           </div>
+        </div>
 
-          <h3>My Requests</h3>
-          {myRequests.length === 0 ? (
-            <p>No requests yet.</p>
-          ) : (
-            myRequests.map((r) => (
-              <div key={r.id} style={{ borderBottom: "1px solid #eee", padding: 10 }}>
-                <div>
-                  <b>{r.start_date}</b> → <b>{r.end_date}</b>
-                </div>
-                <div>Reason: {r.reason}</div>
-                <div>
-                  Status: <b>{r.status}</b>
-                </div>
-
-                {r.status === "pending" && (
-                  <button style={{ marginTop: 6 }} onClick={() => cancelMyRequest(r)}>
-                    Cancel request
-                  </button>
-                )}
+        {/* EMPLOYEE */}
+        {!isAdmin && (
+          <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 14 }}>
+            <div style={styles.card}>
+              <div style={styles.cardTitleRow}>
+                <h3 style={styles.cardTitle}>Request time off</h3>
+                <span style={styles.pill}>
+                  Remaining: {daysInfo.remaining} / {daysInfo.allowance}
+                </span>
               </div>
-            ))
-          )}
-        </>
-      )}
+              <p style={styles.muted}>
+                Pick your dates and add a short reason. You can cancel while it’s still pending.
+              </p>
 
-      {isAdmin && (
-        <>
-          <div style={{ marginTop: 20, marginBottom: 20 }}>
-            <h3>Admin Calendar (Approved Time Off)</h3>
-            <div style={{ border: "1px solid #ddd", padding: 10, borderRadius: 8 }}>
-              <FullCalendar
-                plugins={[dayGridPlugin, interactionPlugin]}
-                initialView="dayGridMonth"
-                events={approvedEvents}
-                height="auto"
-              />
+              <div style={styles.grid2}>
+                <div>
+                  <div style={styles.label}>Start date</div>
+                  <input
+                    style={styles.input}
+                    type="date"
+                    value={start_date}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <div style={styles.label}>End date</div>
+                  <input
+                    style={styles.input}
+                    type="date"
+                    value={end_date}
+                    onChange={(e) => setEndDate(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginTop: 12 }}>
+                <div style={styles.label}>Reason</div>
+                <textarea
+                  style={styles.textarea}
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Example: Family event, appointment, travel…"
+                />
+              </div>
+
+              <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+                <button style={styles.btnPrimary} onClick={submitRequest}>
+                  Submit request
+                </button>
+              </div>
+            </div>
+
+            <div style={styles.card}>
+              <div style={styles.cardTitleRow}>
+                <h3 style={styles.cardTitle}>My requests</h3>
+                <span style={styles.muted}>{myRequests.length} total</span>
+              </div>
+
+              {myRequests.length === 0 ? (
+                <p style={styles.muted}>No requests yet.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {myRequests.map((r) => (
+                    <div key={r.id} style={styles.listItem}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ fontWeight: 800 }}>
+                          {r.start_date} → {r.end_date}
+                        </div>
+                        <span style={styles.status(r.status)}>{r.status}</span>
+                      </div>
+                      <div style={{ color: "#334155", fontSize: 13 }}>{r.reason}</div>
+                      {r.status === "pending" && (
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <button style={styles.btnDanger} onClick={() => cancelMyRequest(r)}>
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
+        )}
 
-          <h3>Pending Requests</h3>
-          {pendingRequests.length === 0 ? (
-            <p>No pending requests.</p>
-          ) : (
-            pendingRequests.map((r) => (
-              <div key={r.id} style={{ border: "1px solid #ccc", padding: 12, marginBottom: 10 }}>
-                <div><b>{r.email}</b></div>
-                <div><b>{r.start_date}</b> → <b>{r.end_date}</b></div>
-                <div>Reason: {r.reason}</div>
-                <div>Status: <b>{r.status}</b></div>
-
-                <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-                  <button onClick={() => adminSetStatus(r, "approved")}>Approve</button>
-                  <button onClick={() => adminSetStatus(r, "denied")}>Deny</button>
-                </div>
+        {/* ADMIN */}
+        {isAdmin && (
+          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 14 }}>
+            <div style={styles.card}>
+              <div style={styles.cardTitleRow}>
+                <h3 style={styles.cardTitle}>Calendar</h3>
+                <span style={styles.muted}>Approved time off</span>
               </div>
-            ))
-          )}
+              <div style={{ borderRadius: 14, overflow: "hidden", border: "1px solid rgba(15,23,42,0.08)" }}>
+                <FullCalendar
+                  plugins={[dayGridPlugin, interactionPlugin]}
+                  initialView="dayGridMonth"
+                  events={approvedEvents}
+                  height="auto"
+                />
+              </div>
+            </div>
 
-          <h3 style={{ marginTop: 25 }}>Already Approved (Admin can revoke)</h3>
-          {requests.filter((r) => r.status === "approved").length === 0 ? (
-            <p>No approved requests yet.</p>
-          ) : (
-            requests
-              .filter((r) => r.status === "approved")
-              .map((r) => (
-                <div key={r.id} style={{ border: "1px solid #eee", padding: 10, marginBottom: 8 }}>
-                  <div><b>{r.email}</b></div>
-                  <div><b>{r.start_date}</b> → <b>{r.end_date}</b></div>
-                  <div>Status: <b>{r.status}</b></div>
+            <div style={styles.card}>
+              <div style={styles.cardTitleRow}>
+                <h3 style={styles.cardTitle}>Pending approvals</h3>
+                <span style={styles.muted}>{pendingRequests.length}</span>
+              </div>
 
-                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                    <button onClick={() => adminSetStatus(r, "revoked")}>
-                      Revoke approval
-                    </button>
-                    <button onClick={() => adminSetStatus(r, "denied")}>
-                      Change to denied
-                    </button>
-                  </div>
+              {pendingRequests.length === 0 ? (
+                <p style={styles.muted}>No pending requests.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {pendingRequests.map((r) => (
+                    <div key={r.id} style={styles.listItem}>
+                      <div style={{ fontWeight: 900 }}>{r.email}</div>
+                      <div style={{ fontWeight: 800 }}>
+                        {r.start_date} → {r.end_date}
+                      </div>
+                      <div style={{ color: "#334155", fontSize: 13 }}>{r.reason}</div>
+
+                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                        <button style={styles.btnPrimary} onClick={() => adminSetStatus(r, "approved")}>
+                          Approve
+                        </button>
+                        <button style={styles.btnDanger} onClick={() => adminSetStatus(r, "denied")}>
+                          Deny
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))
-          )}
-        </>
-      )}
+              )}
+
+              <div style={styles.divider} />
+
+              <div style={styles.cardTitleRow}>
+                <h3 style={styles.cardTitle}>Approved (revoke)</h3>
+                <span style={styles.muted}>
+                  {requests.filter((r) => r.status === "approved").length}
+                </span>
+              </div>
+
+              {requests.filter((r) => r.status === "approved").length === 0 ? (
+                <p style={styles.muted}>No approved requests yet.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {requests
+                    .filter((r) => r.status === "approved")
+                    .slice(0, 8)
+                    .map((r) => (
+                      <div key={r.id} style={styles.listItem}>
+                        <div style={{ fontWeight: 900 }}>{r.email}</div>
+                        <div style={{ fontWeight: 800 }}>
+                          {r.start_date} → {r.end_date}
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <button style={styles.btnWarn} onClick={() => adminSetStatus(r, "revoked")}>
+                            Revoke
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              <p style={{ ...styles.muted, marginTop: 10 }}>
+                Tip: you can always find older approved items in the calendar.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
