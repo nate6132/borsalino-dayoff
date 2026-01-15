@@ -1,14 +1,23 @@
-/* Clean baseline */
+/* Clean baseline + iPhone overflow fixes */
 * {
   box-sizing: border-box;
 }
 
-html,
-body,
-#root {
+html, body, #root {
   height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+
+  /* ✅ stops iOS side-scrolling */
+  overflow-x: hidden;
+
+  /* ✅ prevents elastic sideways panning */
+  position: relative;
 }
 
-body {
-  margin: 0;
+img, svg, video, canvas {
+  max-width: 100%;
+  height: auto;
+  display: block;
 }
