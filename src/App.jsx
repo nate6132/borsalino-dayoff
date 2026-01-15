@@ -402,7 +402,13 @@ export default function App() {
                 Sign in to request time off and view your status.
               </p>
             </div>
-            <Auth supabaseClient={supabase} appearance={{ theme: ThemeSupa }} />
+   <Auth
+  supabaseClient={supabase}
+  appearance={{ theme: ThemeSupa }}
+  providers={[]}
+  redirectTo={window.location.origin}
+  magicLink={false}
+/>
           </div>
         </div>
       </div>
