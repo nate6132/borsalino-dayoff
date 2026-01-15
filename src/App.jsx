@@ -34,7 +34,7 @@ function makeDisplayName(profileName, email) {
 
 const styles = {
   page: {
-    minHeight: "100vh",
+    minHeight: "100svh",
     background:
       "radial-gradient(1200px 600px at 20% 0%, rgba(99,102,241,0.12), transparent 60%), radial-gradient(900px 500px at 80% 10%, rgba(16,185,129,0.10), transparent 55%), #f8fafc",
     fontFamily:
