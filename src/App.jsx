@@ -230,7 +230,7 @@ export default function App() {
   async function loadProfileStuff(userId) {
     const { data, error } = await supabase
       .from("profiles")
-      .select("is_admin, annual_allowance, name")
+      .select("is_admin, annual_allowance, email")
       .eq("id", userId)
       .single();
 
@@ -243,8 +243,7 @@ export default function App() {
     }
 
     setIsAdmin(!!data?.is_admin);
-    setProfileName(data?.name || "");
-
+    setProfileName("");
     const allowance = data?.annual_allowance ?? 14;
     setDaysInfo((prev) => ({ ...prev, allowance }));
   }
@@ -411,6 +410,7 @@ export default function App() {
   }
 
   const displayName = makeDisplayName(profileName, session.user.email);
+
 
   // ---------- APP ----------
   return (
