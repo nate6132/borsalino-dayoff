@@ -335,16 +335,11 @@ export default function App() {
 
   async function onEnablePush() {
   try {
-    if (!session) {
-      alert("Not logged in yet — wait 1 second and try again.");
-      return;
-    }
-
-    await enablePush({ supabase, session });
+    await enablePush(session);
     alert("Notifications enabled ✅");
   } catch (e) {
-    console.log(e);
-    alert(e?.message || "Failed to enable notifications");
+    console.error(e);
+    alert(e.message || "Failed to enable notifications");
   }
 }
 
