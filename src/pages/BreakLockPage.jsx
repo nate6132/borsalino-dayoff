@@ -160,20 +160,16 @@ async function endMyBreak() {
 
 async function adminEndBreak(row) {
   if (!isAdmin) return alert("Admins only");
+
   const ok = confirm(`Override end break for ${row.email}?`);
   if (!ok) return;
-
-  // IMPORTANT: row.id must be a UUID from active_breaks
-  if (!row?.id || row.id === "temp") {
-    alert("Bad break id (row.id missing). Refresh and try again.");
-    return;
-  }
 
   setBusy(true);
   setMsg("");
 
   const { data, error } = await supabase.rpc("admin_end_break_v1", {
-    p_break_id: row.id,
+    p_break_id: row.id, // MUST be uuid from active_breaks.id
+    p_reason: "admin_override",
   });
 
   setBusy(false);
@@ -187,7 +183,7 @@ async function adminEndBreak(row) {
     return;
   }
 
-  setMsg(`✅ Ended ${row.email}'s break`);
+  setMsg("✅ Admin override ended the break");
   await load();
 }
   // ===== TV BOARD (admin-only from App.jsx route) =====
