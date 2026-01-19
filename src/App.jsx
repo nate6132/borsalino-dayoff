@@ -573,8 +573,12 @@ export default function App() {
               />
               <Route
                 path="/breaklock/board"
-                element={<BreakLockPage app={{ supabase, session, isAdmin, styles }} boardMode={true} />}
-              />
+                element={
+                isAdmin
+                  ? <BreakLockPage app={{ supabase, session, isAdmin, styles }} boardMode />
+                  : <Navigate to="/breaklock" replace />
+                }
+               />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
