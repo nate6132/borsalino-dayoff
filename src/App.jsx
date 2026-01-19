@@ -335,20 +335,19 @@ export default function App() {
 
   async function onEnablePush() {
   try {
-    const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-
-    if (!vapidPublicKey) {
-      alert("Missing VITE_VAPID_PUBLIC_KEY in your .env file");
+    if (!session) {
+      alert("Not logged in yet — wait 1 second and try again.");
       return;
     }
 
-    await enablePush({ supabase, session, vapidPublicKey });
+    await enablePush({ supabase, session });
     alert("Notifications enabled ✅");
   } catch (e) {
     console.log(e);
     alert(e?.message || "Failed to enable notifications");
   }
 }
+
 
   if (!session) {
     return (
