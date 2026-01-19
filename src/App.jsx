@@ -5,6 +5,7 @@ import { Auth } from "@supabase/auth-ui-react";
 import { ThemeSupa } from "@supabase/auth-ui-shared";
 import BreakLockPage from "./pages/BreakLockPage.jsx";
 import { enablePush } from "./push";
+import SuggestionsPage from "./pages/SuggestionsPage.jsx";
 
 function getGreeting() {
   const hour = new Date().getHours();
@@ -333,15 +334,16 @@ export default function App() {
     await refreshDaysInfo();
   }
 
-  async function onEnablePush() {
+async function onEnablePush() {
   try {
-    await enablePush(session);
+    await enablePush(); // ✅ no session passed
     alert("Notifications enabled ✅");
   } catch (e) {
     console.error(e);
-    alert(e.message || "Failed to enable notifications");
+    alert(e?.message || "Failed to enable notifications");
   }
 }
+
 
 
   if (!session) {
@@ -563,6 +565,9 @@ export default function App() {
     BreakLock TV
   </Link>
 )}
+<Link to="/suggestions" style={{ ...styles.btn, textDecoration: "none" }}>
+  Suggestions
+</Link>
             </div>
 
             <Routes>
@@ -578,6 +583,10 @@ export default function App() {
                   ? <BreakLockPage app={{ supabase, session, isAdmin, styles }} boardMode />
                   : <Navigate to="/breaklock" replace />
                 }
+               />
+               <Route
+                 path="/suggestions"
+                 element={<SuggestionsPage app={{ supabase, session, isAdmin, styles }} />}
                />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
