@@ -9,7 +9,7 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 export async function enablePush() {
-  // 0) Confirm user is logged in (pull from Supabase directly)
+  // 0) Confirm user is logged in
   const { data } = await supabase.auth.getSession();
   const session = data?.session;
   if (!session?.user) throw new Error("Not logged in (open the app, then try again)");
@@ -22,13 +22,12 @@ export async function enablePush() {
   // 2) Service worker supported?
   if (!("serviceWorker" in navigator)) throw new Error("Service workers not supported");
 
-  // 3) Register SW (sw.js MUST exist in /public so it serves at /sw.js)
+  // 3) Register SW (sw.js must exist in /public so it serves at /sw.js)
   const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
 
   // 4) Permission
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {
-    // If user ever denied before, iOS/desktop will keep returning "denied"
     throw new Error("User denied notifications (enable in device/browser settings)");
   }
 
@@ -46,16 +45,13 @@ export async function enablePush() {
     throw new Error("Push subscription missing keys (blocked by browser/device)");
   }
 
-// 6) Save subscription to DB
-const { error } = await supabase.from("push_subscriptions").upsert({
-  user_id: session.user.id,
-  endpoint: json.endpoint,
-  p256dh: json.keys.p256dh,
-  auth: json.keys.auth,
-  // optional but helpful:
-  user_agent: navigator.userAgent,
-  created_at: new Date().toISOString(),
-});
+  // 6) Save subscription to DB (ONLY columns that exist)
+  const { error } = await supabase.from("push_subscriptions").upsert({
+    user_id: session.user.id,
+    endpoint: json.endpoint,
+    p256dh: json.keys.p256dh,
+    auth: json.keys.auth,
+  });
 
   if (error) throw new Error(`DB save failed: ${error.message}`);
 
