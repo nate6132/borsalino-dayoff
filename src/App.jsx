@@ -558,7 +558,11 @@ export default function App() {
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
               <Link to="/" style={{ ...styles.btn, textDecoration: "none" }}>DayOff</Link>
               <Link to="/breaklock" style={{ ...styles.btn, textDecoration: "none" }}>BreakLock</Link>
-              <Link to="/breaklock/board" style={{ ...styles.btn, textDecoration: "none" }}>BreakLock TV</Link>
+             {isAdmin && (
+  <Link to="/breaklock/board" style={{ ...styles.btn, textDecoration: "none" }}>
+    BreakLock TV
+  </Link>
+)}
             </div>
 
             <Routes>
