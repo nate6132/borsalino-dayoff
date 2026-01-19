@@ -137,47 +137,59 @@ export default function BreakLockPage({ app, boardMode = false }) {
     await load();
   }
 
-  async function endMyBreak() {
-    if (!myActive) return;
+async function endMyBreak() {
+  setBusy(true);
+  setMsg("");
 
-    setBusy(true);
-    setMsg("");
+  const { data, error } = await supabase.rpc("end_my_break_v1");
 
-    const { error } = await supabase
-      .from("active_breaks")
-      .update({ ended_at: new Date().toISOString(), end_reason: "manual" })
-      .eq("id", myActive.id);
+  setBusy(false);
 
-    setBusy(false);
-
-    if (error) return setMsg(`End error: ${error.message}`);
-
-    setMsg("✅ Break ended");
-    await load();
+  if (error) {
+    setMsg(`End error: ${error.message}`);
+    return;
+  }
+  if (!data?.ok) {
+    setMsg(`Could not end: ${data?.error || "unknown"}`);
+    return;
   }
 
-  async function adminOverrideEnd(row) {
-    if (!isAdmin) return alert("Admins only");
-    const ok = confirm(`Override end break for ${row.email}?`);
-    if (!ok) return;
+  setMsg("✅ Break ended");
+  await load();
+}
 
-    setBusy(true);
-    setMsg("");
+async function adminEndBreak(row) {
+  if (!isAdmin) return alert("Admins only");
+  const ok = confirm(`Override end break for ${row.email}?`);
+  if (!ok) return;
 
-    const { error } = await supabase
-      .from("active_breaks")
-      .update({ ended_at: new Date().toISOString(), end_reason: "admin_override" })
-      .eq("id", row.id);
-
-    setBusy(false);
-
-    if (error) return setMsg(`Admin end error: ${error.message}`);
-
-    // optional email/push is handled by tick function (server side), but you can keep this too if you want.
-    setMsg(`✅ Ended ${row.email}'s break`);
-    await load();
+  // IMPORTANT: row.id must be a UUID from active_breaks
+  if (!row?.id || row.id === "temp") {
+    alert("Bad break id (row.id missing). Refresh and try again.");
+    return;
   }
 
+  setBusy(true);
+  setMsg("");
+
+  const { data, error } = await supabase.rpc("admin_end_break_v1", {
+    p_break_id: row.id,
+  });
+
+  setBusy(false);
+
+  if (error) {
+    setMsg(`Admin end error: ${error.message}`);
+    return;
+  }
+  if (!data?.ok) {
+    setMsg(`Admin end failed: ${data?.error || "unknown"}`);
+    return;
+  }
+
+  setMsg(`✅ Ended ${row.email}'s break`);
+  await load();
+}
   // ===== TV BOARD (admin-only from App.jsx route) =====
   if (boardMode) {
     // build “today stats” grouped by email
