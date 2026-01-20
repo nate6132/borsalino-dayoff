@@ -341,61 +341,35 @@ export default function App() {
   async function onEnablePush() {
     try {
       setPushBusy(true);
-      await enablePush();
+      await enablePush(); // make sure enablePush uses UPSERT by endpoint
       alert("Notifications enabled ✅");
     } catch (e) {
-      console.error(e);
+      console.error("enablePush error:", e);
       alert(e?.message || "Failed to enable notifications");
     } finally {
       setPushBusy(false);
     }
   }
 
-  // ✅ NEW: direct fetch with apikey + Authorization so the gateway stops blocking preflight
+  // ✅ FIXED: use supabase.functions.invoke so JWT is correct
   async function onSendTestPush() {
     try {
       setPushBusy(true);
 
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess?.session?.access_token;
-
-      if (!token) {
-        alert("No access token found. Log out and log back in.");
-        return;
-      }
-
-      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      if (!anonKey) {
-        alert("Missing VITE_SUPABASE_ANON_KEY in your Vercel env vars.");
-        return;
-      }
-
-      const url = `${supabase.supabaseUrl}/functions/v1/push-test`;
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: anonKey,
-          Authorization: `Bearer ${token}`,
-        },
-        body: "{}",
+      const { data, error } = await supabase.functions.invoke("push-test", {
+        body: {},
       });
 
-      const text = await res.text();
-      let payload;
-      try { payload = JSON.parse(text); } catch { payload = text; }
-
-      console.log("push-test status:", res.status, payload);
-
-      if (!res.ok) {
-        alert(`push-test failed (${res.status}): ${typeof payload === "string" ? payload : (payload?.error || "unknown")}`);
+      if (error) {
+        console.error("push-test invoke error:", error);
+        alert(error?.message || "Test push failed");
         return;
       }
 
-      alert("Test push triggered ✅ Check for a notification.");
+      console.log("push-test result:", data);
+      alert("push-test reached ✅ (now check function logs / next step is real push sending)");
     } catch (e) {
-      console.error(e);
+      console.error("push-test error:", e);
       alert(e?.message || "Test push failed");
     } finally {
       setPushBusy(false);

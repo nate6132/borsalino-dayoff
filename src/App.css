@@ -1,23 +1,32 @@
+/* Root container */
 #root {
-  max-width: 1280px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  padding: 24px;
+  box-sizing: border-box;
 }
 
+/* Logo base */
 .logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+  height: 64px;
+  width: 64px;
+  padding: 12px;
+  border-radius: 12px;
+  transition: filter 0.3s ease, transform 0.3s ease;
 }
 
+/* Hover glow */
+.logo:hover {
+  filter: drop-shadow(0 0 12px rgba(100, 108, 255, 0.6));
+  transform: scale(1.05);
+}
+
+/* React-specific glow */
+.logo.react:hover {
+  filter: drop-shadow(0 0 12px rgba(97, 218, 251, 0.6));
+}
+
+/* Optional spin animation */
 @keyframes logo-spin {
   from {
     transform: rotate(0deg);
@@ -27,16 +36,21 @@
   }
 }
 
+/* Respect reduced-motion settings */
 @media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
+  .logo.spin {
+    animation: logo-spin 20s linear infinite;
   }
 }
 
+/* Generic card helper (if you still use it anywhere) */
 .card {
-  padding: 2em;
+  padding: 24px;
+  border-radius: 16px;
 }
 
+/* Muted helper text */
 .read-the-docs {
-  color: #888;
+  color: #94a3b8;
+  font-size: 14px;
 }
