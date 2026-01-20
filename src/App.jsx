@@ -185,6 +185,7 @@ export default function App() {
     });
 
     return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadProfileStuff(userId) {
@@ -222,6 +223,7 @@ export default function App() {
 
   useEffect(() => {
     if (session) loadRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   async function refreshDaysInfo() {
@@ -336,37 +338,69 @@ export default function App() {
     await refreshDaysInfo();
   }
 
+  // ✅ Enable push, but if it throws duplicate endpoint, tell the user what it means
   async function onEnablePush() {
     try {
       setPushBusy(true);
-      await enablePush();
+      await enablePush(); // your push.js should be updated to UPSERT endpoint
       alert("Notifications enabled ✅");
     } catch (e) {
       console.error(e);
-      alert(e?.message || "Failed to enable notifications");
+      const msg = String(e?.message || e);
+      if (msg.toLowerCase().includes("duplicate key") || msg.toLowerCase().includes("endpoint_key")) {
+        alert("Notifications are already enabled on this device ✅ (duplicate endpoint)");
+      } else {
+        alert(msg || "Failed to enable notifications");
+      }
     } finally {
       setPushBusy(false);
     }
   }
 
-  // ✅ FIXED: use supabase.functions.invoke (it automatically attaches a real JWT)
+  // ✅ FIX: Always include Authorization header using the current user token
   async function onSendTestPush() {
     try {
       setPushBusy(true);
 
-      // sanity check: prove we have a session + token
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      const { data: sess, error: sessErr } = await supabase.auth.getSession();
+      if (sessErr) throw sessErr;
+
+      const token = sess?.session?.access_token;
       if (!token) {
-        alert("No session token found. Log out and log back in.");
+        alert("No login token found. Log out and log back in.");
         return;
       }
 
-      const { data, error } = await supabase.functions.invoke("push-test", { body: {} });
-      if (error) throw error;
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      if (!anonKey) {
+        alert("Missing VITE_SUPABASE_ANON_KEY (set it in Vercel env vars + .env for local).");
+        return;
+      }
 
-      console.log("push-test ok:", data);
-      alert("Test push triggered ✅ Check for a notification.");
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/push-test`;
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: anonKey,
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ ping: true }),
+      });
+
+      const text = await res.text();
+      let payload;
+      try { payload = JSON.parse(text); } catch { payload = text; }
+
+      console.log("push-test status:", res.status, payload);
+
+      if (!res.ok) {
+        alert(`push-test failed (${res.status}): ${typeof payload === "string" ? payload : (payload?.message || payload?.error || "unknown")}`);
+        return;
+      }
+
+      alert("push-test OK ✅ (check console for payload)");
     } catch (e) {
       console.error(e);
       alert(e?.message || "Test push failed");

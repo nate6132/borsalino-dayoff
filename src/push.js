@@ -10,9 +10,11 @@ function urlBase64ToUint8Array(base64String) {
 
 export async function enablePush() {
   // 0) Confirm user is logged in
-  const { data } = await supabase.auth.getSession();
+  const { data, error: sessErr } = await supabase.auth.getSession();
+  if (sessErr) throw sessErr;
+
   const session = data?.session;
-  if (!session?.user) throw new Error("Not logged in (open the app, then try again)");
+  if (!session?.user) throw new Error("Not logged in. Refresh and log in again.");
 
   // 1) Must be secure context (https or localhost)
   if (!window.isSecureContext) {
@@ -20,43 +22,60 @@ export async function enablePush() {
   }
 
   // 2) Service worker supported?
-  if (!("serviceWorker" in navigator)) throw new Error("Service workers not supported");
+  if (!("serviceWorker" in navigator)) {
+    throw new Error("Service workers not supported in this browser.");
+  }
 
-  // 3) Register SW (sw.js must exist in /public so it serves at /sw.js)
+  // 3) Register SW (sw.js must be in /public so it serves at /sw.js)
   const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+
+  // Optional but helpful: make sure we’re using the latest service worker
+  try {
+    await reg.update();
+  } catch {
+    // ignore
+  }
 
   // 4) Permission
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {
-    throw new Error("User denied notifications (enable in device/browser settings)");
+    throw new Error("Notifications blocked. Enable in browser/device settings.");
   }
 
-  // 5) Subscribe
+  // 5) Subscribe (or reuse existing subscription)
   const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
   if (!vapidKey) throw new Error("Missing VITE_VAPID_PUBLIC_KEY");
 
-  const sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidKey),
-  });
-
-  const json = sub.toJSON();
-  if (!json?.endpoint || !json?.keys?.p256dh || !json?.keys?.auth) {
-    throw new Error("Push subscription missing keys (blocked by browser/device)");
+  // If already subscribed, reuse it
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidKey),
+    });
   }
 
-  // 6) Save subscription to DB (ONLY columns that exist)
- const { error } = await supabase
-  .from("push_subscriptions")
-  .upsert(
-    {
-      user_id: session.user.id,
-      endpoint: sub.endpoint,
-      p256dh: keys.p256dh,
-      auth: keys.auth,
-    },
-    { onConflict: "endpoint" }
-  );
+  const json = sub.toJSON();
+  const endpoint = json?.endpoint;
+  const p256dh = json?.keys?.p256dh;
+  const auth = json?.keys?.auth;
+
+  if (!endpoint || !p256dh || !auth) {
+    throw new Error("Push subscription missing keys (browser/device blocked).");
+  }
+
+  // 6) Save subscription to DB using UPSERT on endpoint
+  const { error } = await supabase
+    .from("push_subscriptions")
+    .upsert(
+      {
+        user_id: session.user.id,
+        endpoint,
+        p256dh,
+        auth,
+      },
+      { onConflict: "endpoint" }
+    );
 
   if (error) throw new Error(`DB save failed: ${error.message}`);
 
