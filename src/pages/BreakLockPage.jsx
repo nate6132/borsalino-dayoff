@@ -1,16 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 function msUntil(ts) {
   if (!ts) return 0;
   const t = new Date(ts).getTime();
   return Math.max(0, t - Date.now());
 }
+
 function fmt(ms) {
   const total = Math.ceil(ms / 1000);
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
+
 function prettyTime(ts) {
   if (!ts) return "—";
   try {
@@ -28,17 +30,22 @@ export default function BreakLockPage({ app, boardMode = false }) {
   const [msg, setMsg] = useState("");
 
   const [capacity, setCapacity] = useState(2);
-
-  // pulled from RPCs
   const [active, setActive] = useState([]);
   const [today, setToday] = useState([]);
 
-  // ticker for countdown display
+  // 1-second ticker for countdown display
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((x) => x + 1), 1000);
     return () => clearInterval(id);
   }, []);
+
+  // ====== Flicker fix helpers ======
+  // loadSeq ensures only the newest load() response updates the UI.
+  const loadSeq = useRef(0);
+
+  // we use this so realtime doesn't spam load() while a button action is happening
+  const actionInFlight = useRef(false);
 
   if (!supabase || !session) {
     return (
@@ -48,8 +55,11 @@ export default function BreakLockPage({ app, boardMode = false }) {
     );
   }
 
-  async function load() {
-    setMsg("");
+  async function load({ quiet = true } = {}) {
+    const seq = ++loadSeq.current;
+
+    // Quiet means: don't clear message while refreshing (prevents UI blink)
+    if (!quiet) setMsg("");
 
     // capacity from break_lock (id=1)
     {
@@ -59,16 +69,21 @@ export default function BreakLockPage({ app, boardMode = false }) {
         .eq("id", 1)
         .maybeSingle();
 
-      if (!error && data?.capacity) setCapacity(data.capacity);
+      // only apply if this is still the latest load call
+      if (seq === loadSeq.current && !error && typeof data?.capacity === "number") {
+        setCapacity(data.capacity);
+      }
     }
 
-    // active via RPC (avoids RLS weirdness)
+    // active via RPC
     {
       const { data, error } = await supabase.rpc("get_active_breaks_v1");
+      if (seq !== loadSeq.current) return;
+
       if (error) {
         console.log("get_active_breaks_v1 error:", error);
+        // Don’t wipe UI to empty unless truly needed; show error instead
         setMsg(`Active load error: ${error.message}`);
-        setActive([]);
       } else {
         setActive(data || []);
       }
@@ -77,9 +92,11 @@ export default function BreakLockPage({ app, boardMode = false }) {
     // today stats via RPC
     {
       const { data, error } = await supabase.rpc("get_breaks_today_v1");
+      if (seq !== loadSeq.current) return;
+
       if (error) {
         console.log("get_breaks_today_v1 error:", error);
-        setToday([]);
+        // keep whatever was there; avoids blinking
       } else {
         setToday(data || []);
       }
@@ -87,16 +104,22 @@ export default function BreakLockPage({ app, boardMode = false }) {
   }
 
   useEffect(() => {
-    load();
+    load({ quiet: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // realtime refresh
+  // realtime refresh (but don't spam while an action is in flight)
   useEffect(() => {
     const ch = supabase
       .channel("breaklock-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "active_breaks" }, () => load())
-      .on("postgres_changes", { event: "*", schema: "public", table: "break_lock" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "active_breaks" }, () => {
+        if (actionInFlight.current) return;
+        load({ quiet: true });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "break_lock" }, () => {
+        if (actionInFlight.current) return;
+        load({ quiet: true });
+      })
       .subscribe();
 
     return () => supabase.removeChannel(ch);
@@ -119,76 +142,94 @@ export default function BreakLockPage({ app, boardMode = false }) {
   const locked = active.length >= capacity;
   const canStart = !myActive && !locked;
 
-  // ===== actions =====
+  // ===== actions (RPC-ONLY) =====
+
   async function startBreak() {
     setBusy(true);
-    setMsg("");
+    // don't clear msg instantly; avoids message flicker
+    actionInFlight.current = true;
 
-    const { data, error } = await supabase.rpc("start_break_v3", {
-      p_duration_minutes: DEFAULT_DURATION_MIN,
+    const { data, error } = await supabase.rpc("breaklock_start");
+
+    setBusy(false);
+
+    if (error) {
+      actionInFlight.current = false;
+      return setMsg(`Start error: ${error.message}`);
+    }
+    if (!data?.ok) {
+      actionInFlight.current = false;
+      return setMsg(`Could not start: ${data?.error || "unknown"}`);
+    }
+
+    setMsg(data?.already_active ? "ℹ️ You are already on break" : "✅ Break started");
+
+    // Let realtime bring the update. Backup refresh after a tiny delay.
+    setTimeout(() => {
+      actionInFlight.current = false;
+      load({ quiet: true });
+    }, 250);
+  }
+
+  async function endMyBreak() {
+    setBusy(true);
+    actionInFlight.current = true;
+
+    const { data, error } = await supabase.rpc("breaklock_end_my");
+
+    setBusy(false);
+
+    if (error) {
+      actionInFlight.current = false;
+      return setMsg(`End error: ${error.message}`);
+    }
+    if (!data?.ok) {
+      actionInFlight.current = false;
+      return setMsg(`Could not end: ${data?.error || "unknown"}`);
+    }
+
+    setMsg("✅ Break ended");
+
+    setTimeout(() => {
+      actionInFlight.current = false;
+      load({ quiet: true });
+    }, 250);
+  }
+
+  async function adminEndBreak(row) {
+    if (!isAdmin) return alert("Admins only");
+
+    const ok = confirm(`Override end break for ${row.email}?`);
+    if (!ok) return;
+
+    setBusy(true);
+    actionInFlight.current = true;
+
+    const { data, error } = await supabase.rpc("breaklock_admin_end", {
+      p_break_id: row.id,
     });
 
     setBusy(false);
 
-    if (error) return setMsg(`Start error: ${error.message}`);
-    if (!data?.ok) return setMsg(`Could not start: ${data?.error || "unknown"}`);
+    if (error) {
+      actionInFlight.current = false;
+      return setMsg(`Admin end error: ${error.message}`);
+    }
+    if (!data?.ok) {
+      actionInFlight.current = false;
+      return setMsg(`Admin end failed: ${data?.error || "unknown"}`);
+    }
 
-    setMsg("✅ Break started");
-    await load();
+    setMsg("✅ Admin override ended the break");
+
+    setTimeout(() => {
+      actionInFlight.current = false;
+      load({ quiet: true });
+    }, 250);
   }
 
-async function endMyBreak() {
-  setBusy(true);
-  setMsg("");
-
-  const { data, error } = await supabase.rpc("end_my_break_v1");
-
-  setBusy(false);
-
-  if (error) {
-    setMsg(`End error: ${error.message}`);
-    return;
-  }
-  if (!data?.ok) {
-    setMsg(`Could not end: ${data?.error || "unknown"}`);
-    return;
-  }
-
-  setMsg("✅ Break ended");
-  await load();
-}
-
-async function adminEndBreak(row) {
-  if (!isAdmin) return alert("Admins only");
-
-  const ok = confirm(`Override end break for ${row.email}?`);
-  if (!ok) return;
-
-  setBusy(true);
-  setMsg("");
-
-  const { data, error } = await supabase.rpc("admin_end_break_v1", {
-    p_break_id: row.id, // MUST be uuid from active_breaks.id
-    p_reason: "admin_override",
-  });
-
-  setBusy(false);
-
-  if (error) {
-    setMsg(`Admin end error: ${error.message}`);
-    return;
-  }
-  if (!data?.ok) {
-    setMsg(`Admin end failed: ${data?.error || "unknown"}`);
-    return;
-  }
-
-  setMsg("✅ Admin override ended the break");
-  await load();
-}
-  // ===== TV BOARD (admin-only from App.jsx route) =====
+  // ===== TV BOARD =====
   if (boardMode) {
-    // build “today stats” grouped by email
     const byPerson = {};
     for (const r of today) {
       const key = (r.email || "unknown").toLowerCase();
@@ -202,7 +243,9 @@ async function adminEndBreak(row) {
         <div style={styles?.card}>
           <div style={styles?.h3row}>
             <h3 style={{ ...styles?.h3, fontSize: 22 }}>BreakLock — TV Board</h3>
-            <span style={styles?.pill}>Capacity: <b>{capacity}</b></span>
+            <span style={styles?.pill}>
+              Capacity: <b>{capacity}</b>
+            </span>
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -233,7 +276,6 @@ async function adminEndBreak(row) {
           </div>
         </div>
 
-        {/* ✅ TODAY STATS */}
         <div style={styles?.card}>
           <div style={styles?.h3row}>
             <h3 style={styles?.h3}>Today’s break stats</h3>
@@ -253,7 +295,9 @@ async function adminEndBreak(row) {
                         <div style={styles?.muted}>
                           {prettyTime(br.started_at)} → {br.ended_at ? prettyTime(br.ended_at) : "—"}
                         </div>
-                        <div style={{ fontWeight: 900 }}>{br.end_reason || (br.ended_at ? "ended" : "active")}</div>
+                        <div style={{ fontWeight: 900 }}>
+                          {br.end_reason || (br.ended_at ? "ended" : "active")}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -281,7 +325,6 @@ async function adminEndBreak(row) {
 
         {msg && <div style={{ marginTop: 10, fontWeight: 900, whiteSpace: "pre-wrap" }}>{msg}</div>}
 
-        {/* status */}
         <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
           <div style={styles?.listItem}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
@@ -303,21 +346,19 @@ async function adminEndBreak(row) {
             )}
           </div>
 
-          {/* actions */}
           <div style={styles?.listItem}>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <button style={styles?.btnPrimary} onClick={startBreak} disabled={busy || !canStart}>
                 {busy ? "Working…" : myActive ? "On Break" : "Start Break"}
               </button>
 
-              {/* ✅ always show End button when you actually have an active break */}
               {myActive && (
                 <button style={styles?.btn} onClick={endMyBreak} disabled={busy}>
                   End My Break
                 </button>
               )}
 
-              <button style={styles?.btn} onClick={load} disabled={busy}>
+              <button style={styles?.btn} onClick={() => load({ quiet: false })} disabled={busy}>
                 Refresh
               </button>
 
@@ -337,7 +378,6 @@ async function adminEndBreak(row) {
         </div>
       </div>
 
-      {/* admin controls */}
       {isAdmin && (
         <div style={styles?.card}>
           <div style={styles?.h3row}>
@@ -356,7 +396,7 @@ async function adminEndBreak(row) {
                 </div>
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                  <button style={styles?.btnWarn} onClick={() => adminOverrideEnd(b)} disabled={busy}>
+                  <button style={styles?.btnWarn} onClick={() => adminEndBreak(b)} disabled={busy}>
                     Override end break
                   </button>
                 </div>

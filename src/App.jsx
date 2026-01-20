@@ -170,6 +170,8 @@ export default function App() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const [pushBusy, setPushBusy] = useState(false);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -334,17 +336,34 @@ export default function App() {
     await refreshDaysInfo();
   }
 
-async function onEnablePush() {
-  try {
-    await enablePush(); // ✅ no session passed
-    alert("Notifications enabled ✅");
-  } catch (e) {
-    console.error(e);
-    alert(e?.message || "Failed to enable notifications");
+  async function onEnablePush() {
+    try {
+      setPushBusy(true);
+      await enablePush();
+      alert("Notifications enabled ✅");
+    } catch (e) {
+      console.error(e);
+      alert(e?.message || "Failed to enable notifications");
+    } finally {
+      setPushBusy(false);
+    }
   }
-}
 
-
+  // ✅ NEW: call the edge function test using the already-configured Supabase client
+  async function onSendTestPush() {
+    try {
+      setPushBusy(true);
+      const { data, error } = await supabase.functions.invoke("push-test", { body: {} });
+      if (error) throw error;
+      console.log("push-test result:", data);
+      alert("Test push triggered ✅ Check for a notification (and console).");
+    } catch (e) {
+      console.error(e);
+      alert(e?.message || "Test push failed");
+    } finally {
+      setPushBusy(false);
+    }
+  }
 
   if (!session) {
     return (
@@ -548,9 +567,16 @@ async function onEnablePush() {
 
               <div style={styles.rightRow}>
                 <span style={styles.badge}>{isAdmin ? "Admin" : "Employee"}</span>
-                <button style={styles.btn} onClick={onEnablePush}>
-                  Enable Notifications
+
+                <button style={styles.btn} onClick={onEnablePush} disabled={pushBusy}>
+                  {pushBusy ? "Working…" : "Enable Notifications"}
                 </button>
+
+                {/* ✅ NEW BUTTON */}
+                <button style={styles.btn} onClick={onSendTestPush} disabled={pushBusy}>
+                  {pushBusy ? "Working…" : "Send Test Push"}
+                </button>
+
                 <button style={styles.btn} onClick={() => supabase.auth.signOut()}>
                   Log out
                 </button>
@@ -560,14 +586,14 @@ async function onEnablePush() {
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
               <Link to="/" style={{ ...styles.btn, textDecoration: "none" }}>DayOff</Link>
               <Link to="/breaklock" style={{ ...styles.btn, textDecoration: "none" }}>BreakLock</Link>
-             {isAdmin && (
-  <Link to="/breaklock/board" style={{ ...styles.btn, textDecoration: "none" }}>
-    BreakLock TV
-  </Link>
-)}
-<Link to="/suggestions" style={{ ...styles.btn, textDecoration: "none" }}>
-  Suggestions
-</Link>
+              {isAdmin && (
+                <Link to="/breaklock/board" style={{ ...styles.btn, textDecoration: "none" }}>
+                  BreakLock TV
+                </Link>
+              )}
+              <Link to="/suggestions" style={{ ...styles.btn, textDecoration: "none" }}>
+                Suggestions
+              </Link>
             </div>
 
             <Routes>
@@ -579,15 +605,15 @@ async function onEnablePush() {
               <Route
                 path="/breaklock/board"
                 element={
-                isAdmin
-                  ? <BreakLockPage app={{ supabase, session, isAdmin, styles }} boardMode />
-                  : <Navigate to="/breaklock" replace />
+                  isAdmin
+                    ? <BreakLockPage app={{ supabase, session, isAdmin, styles }} boardMode />
+                    : <Navigate to="/breaklock" replace />
                 }
-               />
-               <Route
-                 path="/suggestions"
-                 element={<SuggestionsPage app={{ supabase, session, isAdmin, styles }} />}
-               />
+              />
+              <Route
+                path="/suggestions"
+                element={<SuggestionsPage app={{ supabase, session, isAdmin, styles }} />}
+              />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
