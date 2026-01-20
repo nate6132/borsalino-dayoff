@@ -185,7 +185,6 @@ export default function App() {
     });
 
     return () => subscription.unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadProfileStuff(userId) {
@@ -223,7 +222,6 @@ export default function App() {
 
   useEffect(() => {
     if (session) loadRequests();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   async function refreshDaysInfo() {
@@ -341,35 +339,36 @@ export default function App() {
   async function onEnablePush() {
     try {
       setPushBusy(true);
-      await enablePush(); // make sure enablePush uses UPSERT by endpoint
+      await enablePush();
       alert("Notifications enabled ✅");
     } catch (e) {
-      console.error("enablePush error:", e);
+      console.error(e);
       alert(e?.message || "Failed to enable notifications");
     } finally {
       setPushBusy(false);
     }
   }
 
-  // ✅ FIXED: use supabase.functions.invoke so JWT is correct
+  // ✅ FIXED: use supabase.functions.invoke (it automatically attaches a real JWT)
   async function onSendTestPush() {
     try {
       setPushBusy(true);
 
-      const { data, error } = await supabase.functions.invoke("push-test", {
-        body: {},
-      });
-
-      if (error) {
-        console.error("push-test invoke error:", error);
-        alert(error?.message || "Test push failed");
+      // sanity check: prove we have a session + token
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        alert("No session token found. Log out and log back in.");
         return;
       }
 
-      console.log("push-test result:", data);
-      alert("push-test reached ✅ (now check function logs / next step is real push sending)");
+      const { data, error } = await supabase.functions.invoke("push-test", { body: {} });
+      if (error) throw error;
+
+      console.log("push-test ok:", data);
+      alert("Test push triggered ✅ Check for a notification.");
     } catch (e) {
-      console.error("push-test error:", e);
+      console.error(e);
       alert(e?.message || "Test push failed");
     } finally {
       setPushBusy(false);
