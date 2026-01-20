@@ -358,56 +358,46 @@ export default function App() {
   }
 
   // ✅ FIX: Always include Authorization header using the current user token
-  async function onSendTestPush() {
-    try {
-      setPushBusy(true);
+async function onSendTestPush() {
+  try {
+    setPushBusy(true);
 
-      const { data: sess, error: sessErr } = await supabase.auth.getSession();
-      if (sessErr) throw sessErr;
-
-      const token = sess?.session?.access_token;
-      if (!token) {
-        alert("No login token found. Log out and log back in.");
-        return;
-      }
-
-      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      if (!anonKey) {
-        alert("Missing VITE_SUPABASE_ANON_KEY (set it in Vercel env vars + .env for local).");
-        return;
-      }
-
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/push-test`;
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: anonKey,
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ ping: true }),
-      });
-
-      const text = await res.text();
-      let payload;
-      try { payload = JSON.parse(text); } catch { payload = text; }
-
-      console.log("push-test status:", res.status, payload);
-
-      if (!res.ok) {
-        alert(`push-test failed (${res.status}): ${typeof payload === "string" ? payload : (payload?.message || payload?.error || "unknown")}`);
-        return;
-      }
-
-      alert("push-test OK ✅ (check console for payload)");
-    } catch (e) {
-      console.error(e);
-      alert(e?.message || "Test push failed");
-    } finally {
-      setPushBusy(false);
+    const token = import.meta.env.VITE_PUSH_TEST_TOKEN;
+    if (!token) {
+      alert("Missing VITE_PUSH_TEST_TOKEN in Vercel env vars.");
+      return;
     }
+
+    const url = `${supabase.supabaseUrl}/functions/v1/push-test`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-token": token,
+      },
+      body: JSON.stringify({ from: "app", ts: Date.now() }),
+    });
+
+    const text = await res.text();
+    let payload;
+    try { payload = JSON.parse(text); } catch { payload = text; }
+
+    console.log("push-test status:", res.status, payload);
+
+    if (!res.ok) {
+      alert(`push-test failed (${res.status}): ${typeof payload === "string" ? payload : (payload?.error || "unknown")}`);
+      return;
+    }
+
+    alert("Test call succeeded ✅ Check console.");
+  } catch (e) {
+    console.error(e);
+    alert(e?.message || "Test push failed");
+  } finally {
+    setPushBusy(false);
   }
+}
 
   if (!session) {
     return (
