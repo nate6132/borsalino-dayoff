@@ -348,7 +348,7 @@ export default function App() {
               <div>
                 <div className="titleRow">
                   <h1 className="title">{getGreeting()}, {displayName}</h1>
-                  <span className="chip">{isAdmin ? "Admin" : "Employee"}</span>
+                  <span className="chip warm">{isAdmin ? "Admin" : "Employee"}</span>
                 </div>
                 <p className="muted">{isAdmin ? "Admin dashboard" : "Employee portal"}</p>
               </div>
