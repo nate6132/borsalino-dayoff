@@ -10,11 +10,9 @@ function urlBase64ToUint8Array(base64String) {
 
 export async function enablePush() {
   // 0) Confirm user is logged in
-  const { data, error: sessErr } = await supabase.auth.getSession();
-  if (sessErr) throw sessErr;
-
+  const { data } = await supabase.auth.getSession();
   const session = data?.session;
-  if (!session?.user) throw new Error("Not logged in. Refresh and log in again.");
+  if (!session?.user) throw new Error("Not logged in (open the app, then try again)");
 
   // 1) Must be secure context (https or localhost)
   if (!window.isSecureContext) {
@@ -22,38 +20,25 @@ export async function enablePush() {
   }
 
   // 2) Service worker supported?
-  if (!("serviceWorker" in navigator)) {
-    throw new Error("Service workers not supported in this browser.");
-  }
+  if (!("serviceWorker" in navigator)) throw new Error("Service workers not supported");
 
-  // 3) Register SW (sw.js must be in /public so it serves at /sw.js)
+  // 3) Register SW
   const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-
-  // Optional but helpful: make sure we’re using the latest service worker
-  try {
-    await reg.update();
-  } catch {
-    // ignore
-  }
 
   // 4) Permission
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {
-    throw new Error("Notifications blocked. Enable in browser/device settings.");
+    throw new Error("User denied notifications (enable in device/browser settings)");
   }
 
-  // 5) Subscribe (or reuse existing subscription)
+  // 5) Subscribe
   const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
   if (!vapidKey) throw new Error("Missing VITE_VAPID_PUBLIC_KEY");
 
-  // If already subscribed, reuse it
-  let sub = await reg.pushManager.getSubscription();
-  if (!sub) {
-    sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapidKey),
-    });
-  }
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(vapidKey),
+  });
 
   const json = sub.toJSON();
   const endpoint = json?.endpoint;
@@ -61,10 +46,10 @@ export async function enablePush() {
   const auth = json?.keys?.auth;
 
   if (!endpoint || !p256dh || !auth) {
-    throw new Error("Push subscription missing keys (browser/device blocked).");
+    throw new Error("Push subscription missing keys (blocked by browser/device)");
   }
 
-  // 6) Save subscription to DB using UPSERT on endpoint
+  // 6) Save subscription to DB (upsert prevents duplicates)
   const { error } = await supabase
     .from("push_subscriptions")
     .upsert(
