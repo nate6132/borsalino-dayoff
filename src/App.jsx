@@ -338,66 +338,39 @@ export default function App() {
     await refreshDaysInfo();
   }
 
-  // ✅ Enable push, but if it throws duplicate endpoint, tell the user what it means
   async function onEnablePush() {
     try {
       setPushBusy(true);
-      await enablePush(); // your push.js should be updated to UPSERT endpoint
+      await enablePush();
       alert("Notifications enabled ✅");
     } catch (e) {
       console.error(e);
-      const msg = String(e?.message || e);
-      if (msg.toLowerCase().includes("duplicate key") || msg.toLowerCase().includes("endpoint_key")) {
-        alert("Notifications are already enabled on this device ✅ (duplicate endpoint)");
-      } else {
-        alert(msg || "Failed to enable notifications");
-      }
+      alert(e?.message || "Failed to enable notifications");
     } finally {
       setPushBusy(false);
     }
   }
 
-  // ✅ FIX: Always include Authorization header using the current user token
-async function onSendTestPush() {
-  try {
-    setPushBusy(true);
+  async function onSendTestPush() {
+    try {
+      setPushBusy(true);
 
-    const token = import.meta.env.VITE_PUSH_TEST_TOKEN;
-    if (!token) {
-      alert("Missing VITE_PUSH_TEST_TOKEN in Vercel env vars.");
-      return;
+      const { data, error } = await supabase.functions.invoke("push-test", { body: {} });
+      console.log("push-test result:", { data, error });
+
+      if (error) {
+        alert(`push-test failed: ${error.message}`);
+        return;
+      }
+
+      alert("push-test OK ✅ (check console for details)");
+    } catch (e) {
+      console.error(e);
+      alert(e?.message || "push-test failed");
+    } finally {
+      setPushBusy(false);
     }
-
-    const url = `${supabase.supabaseUrl}/functions/v1/push-test`;
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-test-token": token,
-      },
-      body: JSON.stringify({ from: "app", ts: Date.now() }),
-    });
-
-    const text = await res.text();
-    let payload;
-    try { payload = JSON.parse(text); } catch { payload = text; }
-
-    console.log("push-test status:", res.status, payload);
-
-    if (!res.ok) {
-      alert(`push-test failed (${res.status}): ${typeof payload === "string" ? payload : (payload?.error || "unknown")}`);
-      return;
-    }
-
-    alert("Test call succeeded ✅ Check console.");
-  } catch (e) {
-    console.error(e);
-    alert(e?.message || "Test push failed");
-  } finally {
-    setPushBusy(false);
   }
-}
 
   if (!session) {
     return (

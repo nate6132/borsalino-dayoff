@@ -1,4 +1,3 @@
-// src/push.js
 import { supabase } from "./supabase";
 
 function urlBase64ToUint8Array(base64String) {
@@ -9,17 +8,17 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 export async function enablePush() {
-  // 0) Must be logged in
+  // 0) Confirm user is logged in
   const { data } = await supabase.auth.getSession();
   const session = data?.session;
   if (!session?.user) throw new Error("Not logged in (open the app, then try again)");
 
-  // 1) Must be HTTPS
+  // 1) Must be secure context (https or localhost)
   if (!window.isSecureContext) {
     throw new Error("Push requires HTTPS (or localhost). Your site is not HTTPS.");
   }
 
-  // 2) Service worker support
+  // 2) Service worker supported?
   if (!("serviceWorker" in navigator)) throw new Error("Service workers not supported");
 
   // 3) Register SW
@@ -41,23 +40,21 @@ export async function enablePush() {
   });
 
   const json = sub.toJSON();
-  const endpoint = json?.endpoint;
-  const p256dh = json?.keys?.p256dh;
-  const auth = json?.keys?.auth;
+  const keys = json?.keys || {};
 
-  if (!endpoint || !p256dh || !auth) {
+  if (!json?.endpoint || !keys?.p256dh || !keys?.auth) {
     throw new Error("Push subscription missing keys (blocked by browser/device)");
   }
 
-  // 6) Save subscription (upsert by endpoint)
+  // 6) Save subscription (UPSERT by endpoint so duplicates never happen)
   const { error } = await supabase
     .from("push_subscriptions")
     .upsert(
       {
         user_id: session.user.id,
-        endpoint,
-        p256dh,
-        auth,
+        endpoint: json.endpoint,
+        p256dh: keys.p256dh,
+        auth: keys.auth,
       },
       { onConflict: "endpoint" }
     );
