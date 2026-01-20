@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Link, Navigate } from "react-router-dom";
 import { supabase } from "./supabase";
 import { Auth } from "@supabase/auth-ui-react";
@@ -73,7 +73,6 @@ function NamePrompt({ currentName, onSave }) {
 export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null); // { is_admin, annual_allowance, display_name }
-  const isAdmin = !!profile?.is_admin;
 
   const [requests, setRequests] = useState([]);
   const [daysInfo, setDaysInfo] = useState({ used: 0, allowance: 14, remaining: 14 });
@@ -85,6 +84,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
 
   const [pushBusy, setPushBusy] = useState(false);
+
+  const isAdmin = !!profile?.is_admin;
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -118,13 +119,14 @@ export default function App() {
       return;
     }
 
+    const allowance = data?.annual_allowance ?? 14;
+
     setProfile({
       is_admin: !!data?.is_admin,
-      annual_allowance: data?.annual_allowance ?? 14,
+      annual_allowance: allowance,
       display_name: data?.display_name ?? "",
     });
 
-    const allowance = data?.annual_allowance ?? 14;
     setDaysInfo((prev) => ({ ...prev, allowance }));
   }
 
@@ -256,7 +258,6 @@ export default function App() {
 
     if (error) return alert(error.message);
 
-    // keep your email function logic
     if (["approved", "denied", "revoked"].includes(newStatus)) {
       const { error: fnErr } = await supabase.functions.invoke("send-approval-email", {
         body: {
@@ -289,7 +290,7 @@ export default function App() {
   async function onSendTestPush() {
     try {
       setPushBusy(true);
-      const res = await sendTestPush(); // <-- REAL push-send
+      const res = await sendTestPush();
       console.log("push-send result:", res);
       alert(`Push sent. (sent: ${res?.sent ?? "?"})`);
     } catch (e) {
@@ -306,10 +307,7 @@ export default function App() {
         <div className="authWrap">
           <div className="card">
             <h2 className="h2">Sign in</h2>
-            <p className="muted" style={{ marginTop: 6 }}>
-              Use your work email.
-            </p>
-
+            <p className="muted" style={{ marginTop: 6 }}>Use your work email.</p>
             <div style={{ marginTop: 14 }}>
               <Auth
                 supabaseClient={supabase}
@@ -328,161 +326,19 @@ export default function App() {
   const displayName = profile?.display_name?.trim() || "there";
   const myEmail = (session?.user?.email || "").trim().toLowerCase();
 
-  const myRequests = useMemo(
-    () => (requests || []).filter((r) => String(r.email || "").trim().toLowerCase() === myEmail),
-    [requests, myEmail]
+  const myRequests = (requests || []).filter(
+    (r) => String(r.email || "").trim().toLowerCase() === myEmail
   );
 
-  const pendingForAdmin = useMemo(
-    () => (requests || []).filter((r) => normalizeStatus(r.status) === "pending"),
-    [requests]
+  const pendingForAdmin = (requests || []).filter(
+    (r) => normalizeStatus(r.status) === "pending"
   );
-
-  function DayOffPage() {
-    return (
-      <div style={{ display: "grid", gap: 14 }}>
-        <div className="card">
-          <div className="row between">
-            <h3 className="h3">Your allowance</h3>
-            <span className="chip">
-              {daysInfo.remaining} remaining / {daysInfo.allowance} total
-            </span>
-          </div>
-          <p className="muted" style={{ marginTop: 6 }}>
-            Used this year: <b>{daysInfo.used}</b>
-          </p>
-        </div>
-
-        <div className="card">
-          <div className="row between wrap">
-            <h3 className="h3">Request time off</h3>
-            <button className="btn" onClick={() => { loadRequests(); refreshDaysInfo(); }}>
-              Refresh
-            </button>
-          </div>
-
-          <form onSubmit={submitRequest} style={{ display: "grid", gap: 12, marginTop: 12 }}>
-            <div className="grid2">
-              <div>
-                <div className="label">Start date</div>
-                <input
-                  type="date"
-                  className="input"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                />
-              </div>
-              <div>
-                <div className="label">End date</div>
-                <input
-                  type="date"
-                  className="input"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="label">Reason</div>
-              <textarea
-                className="textarea"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Briefly explain why you need the day(s) off…"
-              />
-            </div>
-
-            <div className="row wrap" style={{ gap: 10 }}>
-              <button type="submit" className="btn primary" disabled={busy}>
-                {busy ? "Submitting…" : "Submit request"}
-              </button>
-              {msg && <span className="muted" style={{ fontWeight: 700 }}>{msg}</span>}
-            </div>
-          </form>
-        </div>
-
-        <div className="card">
-          <div className="row between">
-            <h3 className="h3">My requests</h3>
-            <span className="chip">{myRequests.length} total</span>
-          </div>
-
-          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-            {myRequests.length === 0 && <p className="muted">No requests yet.</p>}
-
-            {myRequests.map((r) => (
-              <div key={r.id} className="listItem">
-                <div className="row between">
-                  <div className="strong">
-                    {r.start_date} → {r.end_date}
-                  </div>
-                  <span className={`status ${normalizeStatus(r.status) || "unknown"}`}>
-                    {normalizeStatus(r.status) || "unknown"}
-                  </span>
-                </div>
-
-                <div className="muted">{r.reason}</div>
-
-                {normalizeStatus(r.status) === "pending" && (
-                  <div className="row wrap" style={{ marginTop: 10 }}>
-                    <button className="btn danger" onClick={() => cancelMyRequest(r)}>
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {isAdmin && (
-          <div className="card">
-            <div className="row between">
-              <h3 className="h3">Admin approvals</h3>
-              <span className="chip">{pendingForAdmin.length} pending</span>
-            </div>
-
-            <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-              {pendingForAdmin.length === 0 && <p className="muted">No pending requests.</p>}
-
-              {pendingForAdmin.map((r) => (
-                <div key={r.id} className="listItem">
-                  <div className="row between">
-                    <div className="strong">{r.email}</div>
-                    <span className={`status ${normalizeStatus(r.status)}`}>{normalizeStatus(r.status)}</span>
-                  </div>
-
-                  <div className="muted">
-                    {r.start_date} → {r.end_date}
-                  </div>
-                  <div className="muted">{r.reason}</div>
-
-                  <div className="row wrap" style={{ marginTop: 10, gap: 10 }}>
-                    <button className="btn primary" onClick={() => adminSetStatus(r, "approved")}>
-                      Approve
-                    </button>
-                    <button className="btn danger" onClick={() => adminSetStatus(r, "denied")}>
-                      Deny
-                    </button>
-                    <button className="btn warn" onClick={() => adminSetStatus(r, "revoked")}>
-                      Revoke
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
 
   return (
     <BrowserRouter>
       <div className="page">
         <div className="container">
-          {!profile?.display_name?.trim() && (
+          {(!profile?.display_name || !profile.display_name.trim()) && (
             <NamePrompt currentName="" onSave={saveDisplayName} />
           )}
 
@@ -502,11 +358,9 @@ export default function App() {
               <button className="btn" onClick={onEnablePush} disabled={pushBusy}>
                 {pushBusy ? "Working…" : "Enable notifications"}
               </button>
-
               <button className="btn" onClick={onSendTestPush} disabled={pushBusy}>
                 {pushBusy ? "Working…" : "Send test push"}
               </button>
-
               <button className="btn" onClick={() => supabase.auth.signOut()}>
                 Log out
               </button>
@@ -521,18 +375,158 @@ export default function App() {
           </div>
 
           <Routes>
-            <Route path="/" element={<DayOffPage />} />
+            <Route
+              path="/"
+              element={
+                <div style={{ display: "grid", gap: 14 }}>
+                  <div className="card">
+                    <div className="row between">
+                      <h3 className="h3">Your allowance</h3>
+                      <span className="chip">
+                        {daysInfo.remaining} remaining / {daysInfo.allowance} total
+                      </span>
+                    </div>
+                    <p className="muted" style={{ marginTop: 6 }}>
+                      Used this year: <b>{daysInfo.used}</b>
+                    </p>
+                  </div>
+
+                  <div className="card">
+                    <div className="row between wrap">
+                      <h3 className="h3">Request time off</h3>
+                      <button className="btn" onClick={() => { loadRequests(); refreshDaysInfo(); }}>
+                        Refresh
+                      </button>
+                    </div>
+
+                    <form onSubmit={submitRequest} style={{ display: "grid", gap: 12, marginTop: 12 }}>
+                      <div className="grid2">
+                        <div>
+                          <div className="label">Start date</div>
+                          <input
+                            type="date"
+                            className="input"
+                            value={startDate}
+                            onChange={(e) => setStartDate(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <div className="label">End date</div>
+                          <input
+                            type="date"
+                            className="input"
+                            value={endDate}
+                            onChange={(e) => setEndDate(e.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="label">Reason</div>
+                        <textarea
+                          className="textarea"
+                          value={reason}
+                          onChange={(e) => setReason(e.target.value)}
+                          placeholder="Briefly explain why you need the day(s) off…"
+                        />
+                      </div>
+
+                      <div className="row wrap" style={{ gap: 10 }}>
+                        <button type="submit" className="btn primary" disabled={busy}>
+                          {busy ? "Submitting…" : "Submit request"}
+                        </button>
+                        {msg && <span className="muted" style={{ fontWeight: 700 }}>{msg}</span>}
+                      </div>
+                    </form>
+                  </div>
+
+                  <div className="card">
+                    <div className="row between">
+                      <h3 className="h3">My requests</h3>
+                      <span className="chip">{myRequests.length} total</span>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                      {myRequests.length === 0 && <p className="muted">No requests yet.</p>}
+
+                      {myRequests.map((r) => (
+                        <div key={r.id} className="listItem">
+                          <div className="row between">
+                            <div className="strong">{r.start_date} → {r.end_date}</div>
+                            <span className={`status ${normalizeStatus(r.status) || "unknown"}`}>
+                              {normalizeStatus(r.status) || "unknown"}
+                            </span>
+                          </div>
+
+                          <div className="muted">{r.reason}</div>
+
+                          {normalizeStatus(r.status) === "pending" && (
+                            <div className="row wrap" style={{ marginTop: 10 }}>
+                              <button className="btn danger" onClick={() => cancelMyRequest(r)}>
+                                Cancel
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {isAdmin && (
+                    <div className="card">
+                      <div className="row between">
+                        <h3 className="h3">Admin approvals</h3>
+                        <span className="chip">{pendingForAdmin.length} pending</span>
+                      </div>
+
+                      <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                        {pendingForAdmin.length === 0 && <p className="muted">No pending requests.</p>}
+
+                        {pendingForAdmin.map((r) => (
+                          <div key={r.id} className="listItem">
+                            <div className="row between">
+                              <div className="strong">{r.email}</div>
+                              <span className={`status ${normalizeStatus(r.status)}`}>
+                                {normalizeStatus(r.status)}
+                              </span>
+                            </div>
+
+                            <div className="muted">{r.start_date} → {r.end_date}</div>
+                            <div className="muted">{r.reason}</div>
+
+                            <div className="row wrap" style={{ marginTop: 10, gap: 10 }}>
+                              <button className="btn primary" onClick={() => adminSetStatus(r, "approved")}>
+                                Approve
+                              </button>
+                              <button className="btn danger" onClick={() => adminSetStatus(r, "denied")}>
+                                Deny
+                              </button>
+                              <button className="btn warn" onClick={() => adminSetStatus(r, "revoked")}>
+                                Revoke
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              }
+            />
+
             <Route
               path="/breaklock"
               element={<BreakLockPage app={{ supabase, session, isAdmin, styles: null }} boardMode={false} />}
             />
             <Route
               path="/breaklock/board"
-              element={isAdmin ? (
-                <BreakLockPage app={{ supabase, session, isAdmin, styles: null }} boardMode />
-              ) : (
-                <Navigate to="/breaklock" replace />
-              )}
+              element={
+                isAdmin ? (
+                  <BreakLockPage app={{ supabase, session, isAdmin, styles: null }} boardMode />
+                ) : (
+                  <Navigate to="/breaklock" replace />
+                )
+              }
             />
             <Route
               path="/suggestions"
