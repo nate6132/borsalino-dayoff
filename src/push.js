@@ -9,17 +9,17 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 export async function enablePush() {
-  // 0) Confirm user is logged in
+  // 0) Must be logged in
   const { data } = await supabase.auth.getSession();
   const session = data?.session;
   if (!session?.user) throw new Error("Not logged in (open the app, then try again)");
 
-  // 1) Must be secure context (https or localhost)
+  // 1) Must be HTTPS
   if (!window.isSecureContext) {
     throw new Error("Push requires HTTPS (or localhost). Your site is not HTTPS.");
   }
 
-  // 2) Service worker supported?
+  // 2) Service worker support
   if (!("serviceWorker" in navigator)) throw new Error("Service workers not supported");
 
   // 3) Register SW
@@ -49,7 +49,7 @@ export async function enablePush() {
     throw new Error("Push subscription missing keys (blocked by browser/device)");
   }
 
-  // 6) Save subscription to DB (upsert prevents duplicates)
+  // 6) Save subscription (upsert by endpoint)
   const { error } = await supabase
     .from("push_subscriptions")
     .upsert(
