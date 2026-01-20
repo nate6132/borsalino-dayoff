@@ -1,60 +1,52 @@
 // supabase/functions/push-test/index.ts
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
-const ALLOWED_ORIGINS = new Set<string>([
-  "https://borsalinodayoff.com",
-  "http://localhost:5173",
-]);
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "https://borsalinodayoff.com",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
+};
 
-function corsHeaders(origin: string | null) {
-  const o = origin && ALLOWED_ORIGINS.has(origin) ? origin : "https://borsalinodayoff.com";
-  return {
-    "Access-Control-Allow-Origin": o,
-    "Vary": "Origin",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "authorization, apikey, content-type",
-    "Access-Control-Max-Age": "86400",
-    "Content-Type": "application/json",
-  };
-}
-
-serve(async (req) => {
-  const origin = req.headers.get("origin");
-  const headers = corsHeaders(origin);
-
-  // ✅ MUST handle preflight FIRST
+serve(async (req: Request) => {
+  // ✅ Preflight
   if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 200, headers });
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    // Basic auth sanity check (doesn't need to be perfect for test)
-    const auth = req.headers.get("authorization") || "";
-    const apikey = req.headers.get("apikey") || "";
-
-    if (!auth.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ ok: false, error: "missing_authorization" }), {
-        status: 401,
-        headers,
-      });
-    }
-    if (!apikey) {
-      return new Response(JSON.stringify({ ok: false, error: "missing_apikey" }), {
-        status: 401,
-        headers,
+    // ✅ Only allow POST
+    if (req.method !== "POST") {
+      return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), {
+        status: 405,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // ✅ For now, just return success so we prove CORS is fixed.
-    // Later we’ll actually send a real push from DB subscriptions.
-    return new Response(JSON.stringify({ ok: true, message: "push-test reached ✅" }), {
-      status: 200,
-      headers,
-    });
+    // (Optional) read body so it doesn't crash on empty
+    let body: unknown = {};
+    try {
+      body = await req.json();
+    } catch {
+      body = {};
+    }
+
+    // ✅ Basic response (just proves the function works)
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        message: "push-test reached ✅",
+        body,
+        ts: new Date().toISOString(),
+      }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: String(e?.message || e) }), {
-      status: 500,
-      headers,
-    });
+    // ✅ Even errors must return CORS headers
+    return new Response(
+      JSON.stringify({ ok: false, error: String(e?.message || e) }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 });
