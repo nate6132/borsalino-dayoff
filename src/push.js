@@ -42,11 +42,9 @@ export async function enablePush() {
   const json = sub.toJSON();
   const keys = json?.keys || {};
 
-  if (!json?.endpoint || !keys?.p256dh || !keys?.auth) {
-    throw new Error("Push subscription missing keys (blocked by browser/device)");
-  }
+   const json = sub.toJSON();
+  const keys = json?.keys || {};
 
-  // 6) Save subscription (UPSERT by endpoint so duplicates never happen)
   const { error } = await supabase
     .from("push_subscriptions")
     .upsert(
