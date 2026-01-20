@@ -185,7 +185,6 @@ export default function App() {
     });
 
     return () => subscription.unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadProfileStuff(userId) {
@@ -223,7 +222,6 @@ export default function App() {
 
   useEffect(() => {
     if (session) loadRequests();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   async function refreshDaysInfo() {
@@ -355,18 +353,47 @@ export default function App() {
     try {
       setPushBusy(true);
 
-      const { data, error } = await supabase.functions.invoke("push-test", { body: {} });
-      console.log("push-test result:", { data, error });
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) {
+        alert("No access token found. Log out and log back in.");
+        return;
+      }
 
-      if (error) {
-        alert(`push-test failed: ${error.message}`);
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const testToken = import.meta.env.VITE_PUSH_TEST_TOKEN;
+
+      if (!supabaseUrl) return alert("Missing VITE_SUPABASE_URL in Vercel env vars");
+      if (!anonKey) return alert("Missing VITE_SUPABASE_ANON_KEY in Vercel env vars");
+      if (!testToken) return alert("Missing VITE_PUSH_TEST_TOKEN in Vercel env vars");
+
+      const res = await fetch(`${supabaseUrl}/functions/v1/push-test`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: anonKey,
+          Authorization: `Bearer ${token}`,
+          "x-test-token": testToken,
+        },
+        body: JSON.stringify({ message: "Hello from test push ✅" }),
+      });
+
+      const text = await res.text();
+      let payload;
+      try { payload = JSON.parse(text); } catch { payload = text; }
+
+      console.log("push-test status:", res.status, payload);
+
+      if (!res.ok) {
+        alert(`push-test failed (${res.status}): ${typeof payload === "string" ? payload : (payload?.error || payload?.message || "unknown")}`);
         return;
       }
 
       alert("push-test OK ✅ (check console for details)");
     } catch (e) {
       console.error(e);
-      alert(e?.message || "push-test failed");
+      alert(e?.message || "Test push failed");
     } finally {
       setPushBusy(false);
     }

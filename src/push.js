@@ -1,3 +1,4 @@
+// src/push.js
 import { supabase } from "./supabase";
 
 function urlBase64ToUint8Array(base64String) {
@@ -14,9 +15,7 @@ export async function enablePush() {
   if (!session?.user) throw new Error("Not logged in (open the app, then try again)");
 
   // 1) Must be secure context (https or localhost)
-  if (!window.isSecureContext) {
-    throw new Error("Push requires HTTPS (or localhost). Your site is not HTTPS.");
-  }
+  if (!window.isSecureContext) throw new Error("Push requires HTTPS (or localhost).");
 
   // 2) Service worker supported?
   if (!("serviceWorker" in navigator)) throw new Error("Service workers not supported");
@@ -26,9 +25,7 @@ export async function enablePush() {
 
   // 4) Permission
   const permission = await Notification.requestPermission();
-  if (permission !== "granted") {
-    throw new Error("User denied notifications (enable in device/browser settings)");
-  }
+  if (permission !== "granted") throw new Error("Notifications blocked/denied");
 
   // 5) Subscribe
   const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
@@ -41,10 +38,11 @@ export async function enablePush() {
 
   const json = sub.toJSON();
   const keys = json?.keys || {};
+  if (!json?.endpoint || !keys?.p256dh || !keys?.auth) {
+    throw new Error("Push subscription missing keys (blocked by browser/device)");
+  }
 
-   const json = sub.toJSON();
-  const keys = json?.keys || {};
-
+  // 6) Save subscription to DB (upsert by endpoint)
   const { error } = await supabase
     .from("push_subscriptions")
     .upsert(
@@ -58,6 +56,5 @@ export async function enablePush() {
     );
 
   if (error) throw new Error(`DB save failed: ${error.message}`);
-
   return true;
 }
