@@ -1,8 +1,17 @@
+// public/sw.js
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
 self.addEventListener("push", (event) => {
   let data = {};
-  try { data = event.data ? event.data.json() : {}; } catch {}
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: "BreakLock", body: "" };
+  }
+
   const title = data.title || "BreakLock";
-  const body = data.body || "Notification";
+  const body = data.body || "";
   const url = data.url || "/breaklock";
 
   event.waitUntil(
@@ -20,13 +29,9 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     (async () => {
       const allClients = await clients.matchAll({ type: "window", includeUncontrolled: true });
-      const existing = allClients.find((c) => c.url.includes(self.location.origin));
-      if (existing) {
-        existing.focus();
-        existing.navigate(url);
-      } else {
-        clients.openWindow(url);
-      }
+      const existing = allClients.find((c) => c.url.includes(url));
+      if (existing) return existing.focus();
+      return clients.openWindow(url);
     })()
   );
 });

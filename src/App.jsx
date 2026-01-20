@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Routes, Route, Link, Navigate } from "react-router-dom";
 import { supabase } from "./supabase";
 import { Auth } from "@supabase/auth-ui-react";
 import { ThemeSupa } from "@supabase/auth-ui-shared";
+
 import BreakLockPage from "./pages/BreakLockPage.jsx";
-import { enablePush } from "./push";
 import SuggestionsPage from "./pages/SuggestionsPage.jsx";
+import { enablePush, sendTestPush } from "./push";
 
 function getGreeting() {
   const hour = new Date().getHours();
@@ -14,152 +15,65 @@ function getGreeting() {
   return "Good evening";
 }
 
-function prettyNameFromEmail(email) {
-  if (!email) return "";
-  const left = (email.split("@")[0] || "").trim();
-  if (!left) return "";
-  return left.charAt(0).toUpperCase() + left.slice(1);
-}
-
 function normalizeStatus(s) {
   return String(s || "").trim().toLowerCase();
 }
 
-const styles = {
-  page: {
-    minHeight: "100svh",
-    width: "100%",
-    maxWidth: "100vw",
-    overflowX: "hidden",
-    background:
-      "radial-gradient(1200px 700px at 20% 0%, rgba(99,102,241,0.13), transparent 60%), radial-gradient(900px 600px at 85% 10%, rgba(16,185,129,0.11), transparent 58%), #f8fafc",
-    fontFamily:
-      'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial',
-    color: "#0f172a",
-  },
-  safe: {
-    minHeight: "100svh",
-    width: "100%",
-    maxWidth: "100vw",
-    overflowX: "hidden",
-    paddingTop: "env(safe-area-inset-top)",
-    paddingBottom: "env(safe-area-inset-bottom)",
-    paddingLeft: "env(safe-area-inset-left)",
-    paddingRight: "env(safe-area-inset-right)",
-  },
-  container: { width: "100%", maxWidth: 1100, margin: "0 auto", padding: "18px 14px 50px" },
-  card: {
-    borderRadius: 16,
-    background: "rgba(255,255,255,0.9)",
-    border: "1px solid rgba(15, 23, 42, 0.08)",
-    boxShadow: "0 12px 30px rgba(2, 6, 23, 0.06)",
-    padding: 16,
-    backdropFilter: "blur(10px)",
-  },
-  topbar: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    padding: "14px 14px",
-    borderRadius: 16,
-    background: "rgba(255,255,255,0.9)",
-    border: "1px solid rgba(15, 23, 42, 0.08)",
-    boxShadow: "0 12px 30px rgba(2, 6, 23, 0.06)",
-    backdropFilter: "blur(10px)",
-    marginBottom: 14,
-    flexWrap: "wrap",
-  },
-  brandRow: { display: "flex", alignItems: "center", gap: 12, minWidth: 0 },
-  logo: {
-    height: 42,
-    width: 42,
-    objectFit: "cover",
-    borderRadius: 10,
-    border: "1px solid rgba(15,23,42,0.08)",
-    background: "white",
-    flex: "0 0 auto",
-  },
-  brandText: { display: "flex", flexDirection: "column", minWidth: 0 },
-  title: {
-    margin: 0,
-    fontSize: 18,
-    fontWeight: 900,
-    letterSpacing: "-0.02em",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-  },
-  subtitle: { margin: "4px 0 0", fontSize: 13, color: "#475569" },
-  rightRow: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
-  badge: {
-    fontSize: 12,
-    padding: "6px 10px",
-    borderRadius: 999,
-    border: "1px solid rgba(15, 23, 42, 0.10)",
-    background: "rgba(15, 23, 42, 0.04)",
-    color: "#0f172a",
-    fontWeight: 800,
-  },
-  pill: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "8px 10px",
-    borderRadius: 999,
-    border: "1px solid rgba(15, 23, 42, 0.10)",
-    background: "rgba(15, 23, 42, 0.04)",
-    fontSize: 13,
-    color: "#0f172a",
-    fontWeight: 800,
-  },
-  h3row: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 10, flexWrap: "wrap" },
-  h3: { margin: 0, fontSize: 16, fontWeight: 900, letterSpacing: "-0.01em" },
-  muted: { margin: 0, color: "#64748b", fontSize: 13 },
-  label: { fontSize: 12, fontWeight: 900, color: "#334155", marginBottom: 6 },
-  input: { width: "100%", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.12)", background: "white", outline: "none", fontSize: 14 },
-  textarea: { width: "100%", minHeight: 90, padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.12)", background: "white", outline: "none", fontSize: 14, resize: "vertical" },
-  grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
-  btn: { padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.12)", background: "white", cursor: "pointer", fontWeight: 900, fontSize: 14 },
-  btnPrimary: { padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(79,70,229,0.25)", background: "linear-gradient(180deg, rgba(99,102,241,1), rgba(79,70,229,1))", color: "white", cursor: "pointer", fontWeight: 900, fontSize: 14, boxShadow: "0 10px 18px rgba(79,70,229,0.25)" },
-  btnDanger: { padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.10)", color: "#b91c1c", cursor: "pointer", fontWeight: 900, fontSize: 14 },
-  btnWarn: { padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(245,158,11,0.25)", background: "rgba(245,158,11,0.12)", color: "#92400e", cursor: "pointer", fontWeight: 900, fontSize: 14 },
-  list: { display: "grid", gap: 10 },
-  listItem: {
-    padding: "12px 12px",
-    borderRadius: 14,
-    border: "1px solid rgba(15, 23, 42, 0.08)",
-    background: "rgba(255,255,255,0.75)",
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    minWidth: 0,
-  },
-  status: (s) => {
-    const val = normalizeStatus(s);
-    const base = {
-      display: "inline-flex",
-      alignItems: "center",
-      padding: "6px 10px",
-      borderRadius: 999,
-      fontSize: 12,
-      fontWeight: 900,
-      border: "1px solid rgba(15, 23, 42, 0.10)",
-      textTransform: "capitalize",
-      flex: "0 0 auto",
-    };
-    if (val === "approved") return { ...base, background: "rgba(16,185,129,0.12)", color: "#065f46" };
-    if (val === "denied") return { ...base, background: "rgba(239,68,68,0.12)", color: "#991b1b" };
-    if (val === "pending") return { ...base, background: "rgba(99,102,241,0.12)", color: "#3730a3" };
-    if (val === "cancelled") return { ...base, background: "rgba(148,163,184,0.20)", color: "#334155" };
-    if (val === "revoked") return { ...base, background: "rgba(245,158,11,0.15)", color: "#92400e" };
-    return base;
-  },
-};
+function daysBetweenInclusive(startDate, endDate) {
+  const s = new Date(startDate + "T00:00:00");
+  const e = new Date(endDate + "T00:00:00");
+  return Math.floor((e - s) / (1000 * 60 * 60 * 24)) + 1;
+}
+
+function NamePrompt({ currentName, onSave }) {
+  const [name, setName] = useState(currentName || "");
+  const [busy, setBusy] = useState(false);
+  const canSave = name.trim().length >= 2;
+
+  return (
+    <div className="modalBackdrop">
+      <div className="modalCard">
+        <h2 className="h2">Welcome</h2>
+        <p className="muted" style={{ marginTop: 6 }}>
+          What should we call you? This is only used for the greeting.
+        </p>
+
+        <div style={{ marginTop: 14 }}>
+          <div className="label">Your name</div>
+          <input
+            className="input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Nate"
+            autoFocus
+          />
+        </div>
+
+        <div className="row wrap" style={{ marginTop: 14, gap: 10 }}>
+          <button
+            className="btn primary"
+            disabled={!canSave || busy}
+            onClick={async () => {
+              try {
+                setBusy(true);
+                await onSave(name.trim());
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [profile, setProfile] = useState(null); // { is_admin, annual_allowance, display_name }
+  const isAdmin = !!profile?.is_admin;
 
   const [requests, setRequests] = useState([]);
   const [daysInfo, setDaysInfo] = useState({ used: 0, allowance: 14, remaining: 14 });
@@ -175,36 +89,59 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      if (data.session) loadProfileStuff(data.session.user.id);
+      if (data.session) loadProfile(data.session.user.id);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
-      if (newSession) loadProfileStuff(newSession.user.id);
-      else setIsAdmin(false);
+      if (newSession) loadProfile(newSession.user.id);
+      else setProfile(null);
     });
 
     return () => subscription.unsubscribe();
+    // eslint-disable-next-line
   }, []);
 
-  async function loadProfileStuff(userId) {
+  async function loadProfile(userId) {
     const { data, error } = await supabase
       .from("profiles")
-      .select("is_admin, annual_allowance")
+      .select("is_admin, annual_allowance, display_name")
       .eq("id", userId)
       .single();
 
     if (error) {
       console.log("PROFILE ERROR:", error);
-      setIsAdmin(false);
+      setProfile({ is_admin: false, annual_allowance: 14, display_name: "" });
       setDaysInfo({ used: 0, allowance: 14, remaining: 14 });
       return;
     }
 
-    setIsAdmin(!!data?.is_admin);
+    setProfile({
+      is_admin: !!data?.is_admin,
+      annual_allowance: data?.annual_allowance ?? 14,
+      display_name: data?.display_name ?? "",
+    });
 
     const allowance = data?.annual_allowance ?? 14;
     setDaysInfo((prev) => ({ ...prev, allowance }));
+  }
+
+  async function saveDisplayName(name) {
+    if (!session) return;
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ display_name: name })
+      .eq("id", session.user.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setProfile((p) => ({ ...(p || {}), display_name: name }));
   }
 
   async function loadRequests() {
@@ -222,18 +159,19 @@ export default function App() {
 
   useEffect(() => {
     if (session) loadRequests();
+    // eslint-disable-next-line
   }, [session]);
 
   async function refreshDaysInfo() {
     if (!session) return;
 
-    const { data: profile } = await supabase
+    const { data: profileRow } = await supabase
       .from("profiles")
       .select("annual_allowance")
       .eq("id", session.user.id)
       .single();
 
-    const allowance = profile?.annual_allowance ?? 14;
+    const allowance = profileRow?.annual_allowance ?? 14;
     const year = new Date().getFullYear();
 
     const { data: allMine } = await supabase
@@ -244,19 +182,14 @@ export default function App() {
     const used = (allMine || [])
       .filter((r) => new Date(r.start_date).getFullYear() === year)
       .filter((r) => normalizeStatus(r.status) === "approved")
-      .reduce((sum, r) => {
-        const s = new Date(r.start_date + "T00:00:00");
-        const e = new Date(r.end_date + "T00:00:00");
-        const days = Math.floor((e - s) / (1000 * 60 * 60 * 24)) + 1;
-        return sum + days;
-      }, 0);
+      .reduce((sum, r) => sum + daysBetweenInclusive(r.start_date, r.end_date), 0);
 
     setDaysInfo({ used, allowance, remaining: allowance - used });
   }
 
   useEffect(() => {
     if (session) refreshDaysInfo();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [session, requests.length]);
 
   async function submitRequest(e) {
@@ -270,7 +203,7 @@ export default function App() {
     const en = new Date(endDate + "T00:00:00");
     if (en < s) return setMsg("End date must be the same or after the start date.");
 
-    const daysRequested = Math.floor((en - s) / (1000 * 60 * 60 * 24)) + 1;
+    const daysRequested = daysBetweenInclusive(startDate, endDate);
     if (daysRequested > daysInfo.remaining) {
       return setMsg(`Not enough days remaining. You have ${daysInfo.remaining} left.`);
     }
@@ -289,7 +222,6 @@ export default function App() {
     setBusy(false);
 
     if (error) {
-      console.log("SUBMIT ERROR:", error);
       setMsg(error.message);
       return;
     }
@@ -297,15 +229,14 @@ export default function App() {
     setStartDate("");
     setEndDate("");
     setReason("");
-    setMsg("Request submitted ✅");
+    setMsg("Request submitted.");
 
     await loadRequests();
     await refreshDaysInfo();
   }
 
   async function cancelMyRequest(row) {
-    const ok = confirm("Cancel this request? (Only works if still pending)");
-    if (!ok) return;
+    if (!confirm("Cancel this request? (Only works if still pending)")) return;
 
     const { error } = await supabase
       .from("day_off_requests")
@@ -325,9 +256,15 @@ export default function App() {
 
     if (error) return alert(error.message);
 
+    // keep your email function logic
     if (["approved", "denied", "revoked"].includes(newStatus)) {
       const { error: fnErr } = await supabase.functions.invoke("send-approval-email", {
-        body: { email: row.email, start_date: row.start_date, end_date: row.end_date, status: newStatus },
+        body: {
+          email: row.email,
+          start_date: row.start_date,
+          end_date: row.end_date,
+          status: newStatus,
+        },
       });
       if (fnErr) console.log("EMAIL FAILED:", fnErr);
     }
@@ -340,10 +277,10 @@ export default function App() {
     try {
       setPushBusy(true);
       await enablePush();
-      alert("Notifications enabled ✅");
+      alert("Notifications enabled.");
     } catch (e) {
       console.error(e);
-      alert(e?.message || "Failed to enable notifications");
+      alert(e?.message || "Failed to enable notifications.");
     } finally {
       setPushBusy(false);
     }
@@ -352,48 +289,12 @@ export default function App() {
   async function onSendTestPush() {
     try {
       setPushBusy(true);
-
-      const { data } = await supabase.auth.getSession();
-      const token = data?.session?.access_token;
-      if (!token) {
-        alert("No access token found. Log out and log back in.");
-        return;
-      }
-
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const testToken = import.meta.env.VITE_PUSH_TEST_TOKEN;
-
-      if (!supabaseUrl) return alert("Missing VITE_SUPABASE_URL in Vercel env vars");
-      if (!anonKey) return alert("Missing VITE_SUPABASE_ANON_KEY in Vercel env vars");
-      if (!testToken) return alert("Missing VITE_PUSH_TEST_TOKEN in Vercel env vars");
-
-      const res = await fetch(`${supabaseUrl}/functions/v1/push-test`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: anonKey,
-          Authorization: `Bearer ${token}`,
-          "x-test-token": testToken,
-        },
-        body: JSON.stringify({ message: "Hello from test push ✅" }),
-      });
-
-      const text = await res.text();
-      let payload;
-      try { payload = JSON.parse(text); } catch { payload = text; }
-
-      console.log("push-test status:", res.status, payload);
-
-      if (!res.ok) {
-        alert(`push-test failed (${res.status}): ${typeof payload === "string" ? payload : (payload?.error || payload?.message || "unknown")}`);
-        return;
-      }
-
-      alert("push-test OK ✅ (check console for details)");
+      const res = await sendTestPush(); // <-- REAL push-send
+      console.log("push-send result:", res);
+      alert(`Push sent. (sent: ${res?.sent ?? "?"})`);
     } catch (e) {
       console.error(e);
-      alert(e?.message || "Test push failed");
+      alert(e?.message || "Test push failed.");
     } finally {
       setPushBusy(false);
     }
@@ -401,15 +302,15 @@ export default function App() {
 
   if (!session) {
     return (
-      <div style={styles.page}>
-        <div style={styles.safe}>
-          <div style={{ ...styles.container, maxWidth: 460, paddingTop: 70 }}>
-            <div style={styles.card}>
-              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>Welcome 👋</h2>
-              <p style={{ margin: "6px 0 12px", color: "#64748b" }}>
-                Sign in with your work email.
-              </p>
+      <div className="page">
+        <div className="authWrap">
+          <div className="card">
+            <h2 className="h2">Sign in</h2>
+            <p className="muted" style={{ marginTop: 6 }}>
+              Use your work email.
+            </p>
 
+            <div style={{ marginTop: 14 }}>
               <Auth
                 supabaseClient={supabase}
                 appearance={{ theme: ThemeSupa }}
@@ -424,62 +325,58 @@ export default function App() {
     );
   }
 
-  const displayName = prettyNameFromEmail(session?.user?.email);
+  const displayName = profile?.display_name?.trim() || "there";
   const myEmail = (session?.user?.email || "").trim().toLowerCase();
 
-  const myRequests = (requests || []).filter(
-    (r) => String(r.email || "").trim().toLowerCase() === myEmail
+  const myRequests = useMemo(
+    () => (requests || []).filter((r) => String(r.email || "").trim().toLowerCase() === myEmail),
+    [requests, myEmail]
   );
 
-  const pendingForAdmin = (requests || []).filter(
-    (r) => normalizeStatus(r.status) === "pending"
+  const pendingForAdmin = useMemo(
+    () => (requests || []).filter((r) => normalizeStatus(r.status) === "pending"),
+    [requests]
   );
 
   function DayOffPage() {
     return (
       <div style={{ display: "grid", gap: 14 }}>
-        <div style={styles.card}>
-          <div style={styles.h3row}>
-            <h3 style={styles.h3}>Your allowance</h3>
-            <span style={styles.pill}>
+        <div className="card">
+          <div className="row between">
+            <h3 className="h3">Your allowance</h3>
+            <span className="chip">
               {daysInfo.remaining} remaining / {daysInfo.allowance} total
             </span>
           </div>
-          <p style={styles.muted}>
+          <p className="muted" style={{ marginTop: 6 }}>
             Used this year: <b>{daysInfo.used}</b>
           </p>
         </div>
 
-        <div style={styles.card}>
-          <div style={styles.h3row}>
-            <h3 style={styles.h3}>Request time off</h3>
-            <button
-              style={styles.btn}
-              onClick={() => {
-                loadRequests();
-                refreshDaysInfo();
-              }}
-            >
+        <div className="card">
+          <div className="row between wrap">
+            <h3 className="h3">Request time off</h3>
+            <button className="btn" onClick={() => { loadRequests(); refreshDaysInfo(); }}>
               Refresh
             </button>
           </div>
 
-          <form onSubmit={submitRequest} style={{ display: "grid", gap: 12 }}>
-            <div style={styles.grid2}>
+          <form onSubmit={submitRequest} style={{ display: "grid", gap: 12, marginTop: 12 }}>
+            <div className="grid2">
               <div>
-                <div style={styles.label}>Start date</div>
+                <div className="label">Start date</div>
                 <input
                   type="date"
-                  style={styles.input}
+                  className="input"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
                 />
               </div>
               <div>
-                <div style={styles.label}>End date</div>
+                <div className="label">End date</div>
                 <input
                   type="date"
-                  style={styles.input}
+                  className="input"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
                 />
@@ -487,47 +384,49 @@ export default function App() {
             </div>
 
             <div>
-              <div style={styles.label}>Reason</div>
+              <div className="label">Reason</div>
               <textarea
-                style={styles.textarea}
+                className="textarea"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="Briefly explain why you need the day(s) off…"
               />
             </div>
 
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <button type="submit" style={styles.btnPrimary} disabled={busy}>
+            <div className="row wrap" style={{ gap: 10 }}>
+              <button type="submit" className="btn primary" disabled={busy}>
                 {busy ? "Submitting…" : "Submit request"}
               </button>
-              {msg && <span style={{ ...styles.muted, fontWeight: 800 }}>{msg}</span>}
+              {msg && <span className="muted" style={{ fontWeight: 700 }}>{msg}</span>}
             </div>
           </form>
         </div>
 
-        <div style={styles.card}>
-          <div style={styles.h3row}>
-            <h3 style={styles.h3}>My requests</h3>
-            <p style={styles.muted}>{myRequests.length} total</p>
+        <div className="card">
+          <div className="row between">
+            <h3 className="h3">My requests</h3>
+            <span className="chip">{myRequests.length} total</span>
           </div>
 
-          <div style={styles.list}>
-            {myRequests.length === 0 && <p style={styles.muted}>No requests yet.</p>}
+          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+            {myRequests.length === 0 && <p className="muted">No requests yet.</p>}
 
             {myRequests.map((r) => (
-              <div key={r.id} style={styles.listItem}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ fontWeight: 900 }}>
+              <div key={r.id} className="listItem">
+                <div className="row between">
+                  <div className="strong">
                     {r.start_date} → {r.end_date}
                   </div>
-                  <span style={styles.status(r.status)}>{normalizeStatus(r.status) || "unknown"}</span>
+                  <span className={`status ${normalizeStatus(r.status) || "unknown"}`}>
+                    {normalizeStatus(r.status) || "unknown"}
+                  </span>
                 </div>
 
-                <div style={styles.muted}>{r.reason}</div>
+                <div className="muted">{r.reason}</div>
 
                 {normalizeStatus(r.status) === "pending" && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button style={styles.btnDanger} onClick={() => cancelMyRequest(r)}>
+                  <div className="row wrap" style={{ marginTop: 10 }}>
+                    <button className="btn danger" onClick={() => cancelMyRequest(r)}>
                       Cancel
                     </button>
                   </div>
@@ -538,39 +437,35 @@ export default function App() {
         </div>
 
         {isAdmin && (
-          <div style={styles.card}>
-            <div style={styles.h3row}>
-              <h3 style={styles.h3}>Admin approvals</h3>
-              <p style={styles.muted}>{pendingForAdmin.length} pending</p>
+          <div className="card">
+            <div className="row between">
+              <h3 className="h3">Admin approvals</h3>
+              <span className="chip">{pendingForAdmin.length} pending</span>
             </div>
 
-            <div style={styles.list}>
-              {pendingForAdmin.length === 0 && (
-                <p style={styles.muted}>No pending requests. (If you just submitted, hit Refresh)</p>
-              )}
+            <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+              {pendingForAdmin.length === 0 && <p className="muted">No pending requests.</p>}
 
               {pendingForAdmin.map((r) => (
-                <div key={r.id} style={styles.listItem}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                    <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {r.email}
-                    </div>
-                    <span style={styles.status(r.status)}>{normalizeStatus(r.status)}</span>
+                <div key={r.id} className="listItem">
+                  <div className="row between">
+                    <div className="strong">{r.email}</div>
+                    <span className={`status ${normalizeStatus(r.status)}`}>{normalizeStatus(r.status)}</span>
                   </div>
 
-                  <div style={styles.muted}>
+                  <div className="muted">
                     {r.start_date} → {r.end_date}
                   </div>
-                  <div style={styles.muted}>{r.reason}</div>
+                  <div className="muted">{r.reason}</div>
 
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                    <button style={styles.btnPrimary} onClick={() => adminSetStatus(r, "approved")}>
+                  <div className="row wrap" style={{ marginTop: 10, gap: 10 }}>
+                    <button className="btn primary" onClick={() => adminSetStatus(r, "approved")}>
                       Approve
                     </button>
-                    <button style={styles.btnDanger} onClick={() => adminSetStatus(r, "denied")}>
+                    <button className="btn danger" onClick={() => adminSetStatus(r, "denied")}>
                       Deny
                     </button>
-                    <button style={styles.btnWarn} onClick={() => adminSetStatus(r, "revoked")}>
+                    <button className="btn warn" onClick={() => adminSetStatus(r, "revoked")}>
                       Revoke
                     </button>
                   </div>
@@ -585,71 +480,66 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <div style={styles.page}>
-        <div style={styles.safe}>
-          <div style={styles.container}>
-            <div style={styles.topbar}>
-              <div style={styles.brandRow}>
-                <img src="/logo.png" alt="DayOff logo" style={styles.logo} />
-                <div style={styles.brandText}>
-                  <h1 style={styles.title}>
-                    {getGreeting()}, {displayName}
-                  </h1>
-                  <p style={styles.subtitle}>{isAdmin ? "Admin dashboard" : "Welcome back"}</p>
+      <div className="page">
+        <div className="container">
+          {!profile?.display_name?.trim() && (
+            <NamePrompt currentName="" onSave={saveDisplayName} />
+          )}
+
+          <div className="topbar">
+            <div className="brandRow">
+              <img src="/logo.png" alt="Logo" className="logo" />
+              <div>
+                <div className="titleRow">
+                  <h1 className="title">{getGreeting()}, {displayName}</h1>
+                  <span className="chip">{isAdmin ? "Admin" : "Employee"}</span>
                 </div>
-              </div>
-
-              <div style={styles.rightRow}>
-                <span style={styles.badge}>{isAdmin ? "Admin" : "Employee"}</span>
-
-                <button style={styles.btn} onClick={onEnablePush} disabled={pushBusy}>
-                  {pushBusy ? "Working…" : "Enable Notifications"}
-                </button>
-
-                <button style={styles.btn} onClick={onSendTestPush} disabled={pushBusy}>
-                  {pushBusy ? "Working…" : "Send Test Push"}
-                </button>
-
-                <button style={styles.btn} onClick={() => supabase.auth.signOut()}>
-                  Log out
-                </button>
+                <p className="muted">{isAdmin ? "Admin dashboard" : "Employee portal"}</p>
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-              <Link to="/" style={{ ...styles.btn, textDecoration: "none" }}>DayOff</Link>
-              <Link to="/breaklock" style={{ ...styles.btn, textDecoration: "none" }}>BreakLock</Link>
-              {isAdmin && (
-                <Link to="/breaklock/board" style={{ ...styles.btn, textDecoration: "none" }}>
-                  BreakLock TV
-                </Link>
-              )}
-              <Link to="/suggestions" style={{ ...styles.btn, textDecoration: "none" }}>
-                Suggestions
-              </Link>
-            </div>
+            <div className="row wrap" style={{ gap: 10 }}>
+              <button className="btn" onClick={onEnablePush} disabled={pushBusy}>
+                {pushBusy ? "Working…" : "Enable notifications"}
+              </button>
 
-            <Routes>
-              <Route path="/" element={<DayOffPage />} />
-              <Route
-                path="/breaklock"
-                element={<BreakLockPage app={{ supabase, session, isAdmin, styles }} boardMode={false} />}
-              />
-              <Route
-                path="/breaklock/board"
-                element={
-                  isAdmin
-                    ? <BreakLockPage app={{ supabase, session, isAdmin, styles }} boardMode />
-                    : <Navigate to="/breaklock" replace />
-                }
-              />
-              <Route
-                path="/suggestions"
-                element={<SuggestionsPage app={{ supabase, session, isAdmin, styles }} />}
-              />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+              <button className="btn" onClick={onSendTestPush} disabled={pushBusy}>
+                {pushBusy ? "Working…" : "Send test push"}
+              </button>
+
+              <button className="btn" onClick={() => supabase.auth.signOut()}>
+                Log out
+              </button>
+            </div>
           </div>
+
+          <div className="nav">
+            <Link to="/" className="navLink">DayOff</Link>
+            <Link to="/breaklock" className="navLink">BreakLock</Link>
+            {isAdmin && <Link to="/breaklock/board" className="navLink">BreakLock TV</Link>}
+            <Link to="/suggestions" className="navLink">Suggestions</Link>
+          </div>
+
+          <Routes>
+            <Route path="/" element={<DayOffPage />} />
+            <Route
+              path="/breaklock"
+              element={<BreakLockPage app={{ supabase, session, isAdmin, styles: null }} boardMode={false} />}
+            />
+            <Route
+              path="/breaklock/board"
+              element={isAdmin ? (
+                <BreakLockPage app={{ supabase, session, isAdmin, styles: null }} boardMode />
+              ) : (
+                <Navigate to="/breaklock" replace />
+              )}
+            />
+            <Route
+              path="/suggestions"
+              element={<SuggestionsPage app={{ supabase, session, isAdmin, styles: null }} />}
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </div>
       </div>
     </BrowserRouter>

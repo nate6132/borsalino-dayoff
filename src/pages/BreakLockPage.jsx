@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { enablePush, sendTestPush } from "../push";
 
 function msUntil(ts) {
   if (!ts) return 0;
@@ -40,16 +41,12 @@ export default function BreakLockPage({ app, boardMode = false }) {
     return () => clearInterval(id);
   }, []);
 
-  // ====== Flicker fix helpers ======
-  // loadSeq ensures only the newest load() response updates the UI.
   const loadSeq = useRef(0);
-
-  // we use this so realtime doesn't spam load() while a button action is happening
   const actionInFlight = useRef(false);
 
   if (!supabase || !session) {
     return (
-      <div style={{ padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
+      <div className="card">
         <b>BreakLock error:</b> missing <code>supabase</code> or <code>session</code>.
       </div>
     );
@@ -57,73 +54,55 @@ export default function BreakLockPage({ app, boardMode = false }) {
 
   async function load({ quiet = true } = {}) {
     const seq = ++loadSeq.current;
-
-    // Quiet means: don't clear message while refreshing (prevents UI blink)
     if (!quiet) setMsg("");
 
-    // capacity from break_lock (id=1)
+    // capacity
     {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("break_lock")
         .select("capacity")
         .eq("id", 1)
         .maybeSingle();
 
-      // only apply if this is still the latest load call
-      if (seq === loadSeq.current && !error && typeof data?.capacity === "number") {
+      if (seq === loadSeq.current && typeof data?.capacity === "number") {
         setCapacity(data.capacity);
       }
     }
 
-    // active via RPC
+    // active via approved RPC
     {
       const { data, error } = await supabase.rpc("get_active_breaks_v1");
       if (seq !== loadSeq.current) return;
 
-      if (error) {
-        console.log("get_active_breaks_v1 error:", error);
-        // Don’t wipe UI to empty unless truly needed; show error instead
-        setMsg(`Active load error: ${error.message}`);
-      } else {
-        setActive(data || []);
-      }
+      if (error) setMsg(`Active load error: ${error.message}`);
+      else setActive(data || []);
     }
 
-    // today stats via RPC
+    // optional today stats RPC (leave if you have it)
     {
-      const { data, error } = await supabase.rpc("get_breaks_today_v1");
-      if (seq !== loadSeq.current) return;
-
-      if (error) {
-        console.log("get_breaks_today_v1 error:", error);
-        // keep whatever was there; avoids blinking
-      } else {
-        setToday(data || []);
-      }
+      const { data } = await supabase.rpc("get_breaks_today_v1");
+      if (seq === loadSeq.current && data) setToday(data);
     }
   }
 
   useEffect(() => {
     load({ quiet: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, []);
 
-  // realtime refresh (but don't spam while an action is in flight)
   useEffect(() => {
     const ch = supabase
       .channel("breaklock-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "active_breaks" }, () => {
-        if (actionInFlight.current) return;
-        load({ quiet: true });
+        if (!actionInFlight.current) load({ quiet: true });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "break_lock" }, () => {
-        if (actionInFlight.current) return;
-        load({ quiet: true });
+        if (!actionInFlight.current) load({ quiet: true });
       })
       .subscribe();
 
     return () => supabase.removeChannel(ch);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, []);
 
   const myEmail = (session?.user?.email || "").trim().toLowerCase();
@@ -142,29 +121,19 @@ export default function BreakLockPage({ app, boardMode = false }) {
   const locked = active.length >= capacity;
   const canStart = !myActive && !locked;
 
-  // ===== actions (RPC-ONLY) =====
-
   async function startBreak() {
     setBusy(true);
-    // don't clear msg instantly; avoids message flicker
     actionInFlight.current = true;
 
-    const { data, error } = await supabase.rpc("breaklock_start");
-
+    const { error } = await supabase.rpc("start_break_v3");
     setBusy(false);
 
     if (error) {
       actionInFlight.current = false;
       return setMsg(`Start error: ${error.message}`);
     }
-    if (!data?.ok) {
-      actionInFlight.current = false;
-      return setMsg(`Could not start: ${data?.error || "unknown"}`);
-    }
 
-    setMsg(data?.already_active ? "ℹ️ You are already on break" : "✅ Break started");
-
-    // Let realtime bring the update. Backup refresh after a tiny delay.
+    setMsg("Break started.");
     setTimeout(() => {
       actionInFlight.current = false;
       load({ quiet: true });
@@ -175,21 +144,15 @@ export default function BreakLockPage({ app, boardMode = false }) {
     setBusy(true);
     actionInFlight.current = true;
 
-    const { data, error } = await supabase.rpc("breaklock_end_my");
-
+    const { error } = await supabase.rpc("end_my_break_v1");
     setBusy(false);
 
     if (error) {
       actionInFlight.current = false;
       return setMsg(`End error: ${error.message}`);
     }
-    if (!data?.ok) {
-      actionInFlight.current = false;
-      return setMsg(`Could not end: ${data?.error || "unknown"}`);
-    }
 
-    setMsg("✅ Break ended");
-
+    setMsg("Break ended.");
     setTimeout(() => {
       actionInFlight.current = false;
       load({ quiet: true });
@@ -197,78 +160,77 @@ export default function BreakLockPage({ app, boardMode = false }) {
   }
 
   async function adminEndBreak(row) {
-    if (!isAdmin) return alert("Admins only");
+    if (!isAdmin) return;
 
-    const ok = confirm(`Override end break for ${row.email}?`);
-    if (!ok) return;
+    if (!confirm(`Override end break for ${row.email}?`)) return;
 
     setBusy(true);
     actionInFlight.current = true;
 
-    const { data, error } = await supabase.rpc("breaklock_admin_end", {
-      p_break_id: row.id,
-    });
-
+    const { error } = await supabase.rpc("breaklock_admin_end", { p_break_id: row.id });
     setBusy(false);
 
     if (error) {
       actionInFlight.current = false;
       return setMsg(`Admin end error: ${error.message}`);
     }
-    if (!data?.ok) {
-      actionInFlight.current = false;
-      return setMsg(`Admin end failed: ${data?.error || "unknown"}`);
-    }
 
-    setMsg("✅ Admin override ended the break");
-
+    setMsg("Admin override ended the break.");
     setTimeout(() => {
       actionInFlight.current = false;
       load({ quiet: true });
     }, 250);
   }
 
+  async function onEnablePush() {
+    try {
+      await enablePush();
+      setMsg("Notifications enabled.");
+    } catch (e) {
+      setMsg(e?.message || "Failed to enable notifications.");
+    }
+  }
+
+  async function onTestPush() {
+    try {
+      const res = await sendTestPush();
+      setMsg(`Push sent. (sent: ${res?.sent ?? "?"})`);
+    } catch (e) {
+      setMsg(e?.message || "Test push failed.");
+    }
+  }
+
   // ===== TV BOARD =====
   if (boardMode) {
-    const byPerson = {};
-    for (const r of today) {
-      const key = (r.email || "unknown").toLowerCase();
-      if (!byPerson[key]) byPerson[key] = { email: r.email, breaks: [] };
-      byPerson[key].breaks.push(r);
-    }
-    const people = Object.values(byPerson).sort((a, b) => (a.email || "").localeCompare(b.email || ""));
-
     return (
       <div style={{ display: "grid", gap: 14 }}>
-        <div style={styles?.card}>
-          <div style={styles?.h3row}>
-            <h3 style={{ ...styles?.h3, fontSize: 22 }}>BreakLock — TV Board</h3>
-            <span style={styles?.pill}>
-              Capacity: <b>{capacity}</b>
-            </span>
+        <div className="card">
+          <div className="row between">
+            <h3 className="h3">BreakLock — TV Board</h3>
+            <span className="chip">Capacity: <b>{capacity}</b></span>
           </div>
 
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ fontWeight: 900, fontSize: 18 }}>
-              {active.length > 0 ? `🟢 ${active.length} currently on break` : "✅ No one is on break"}
+          <div className="row between wrap">
+            <div className="strong">
+              {active.length > 0 ? `${active.length} currently on break` : "No one is on break"}
             </div>
-            <div style={{ fontWeight: 900, fontSize: 18 }}>
+            <div className="strong">
               {active.length > 0 ? `Next ends in: ${fmt(soonestRemainingMs)}` : "Unlocked"}
             </div>
           </div>
 
-          {msg && <div style={{ marginTop: 10, fontWeight: 900, whiteSpace: "pre-wrap" }}>{msg}</div>}
+          {msg && <div className="notice">{msg}</div>}
 
           <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-            {active.length === 0 && <div style={styles?.muted}>Waiting for someone to start a break…</div>}
+            {active.length === 0 && <div className="muted">Waiting for someone to start a break…</div>}
 
             {active.map((b) => (
-              <div key={b.id} style={styles?.listItem}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ fontWeight: 1000, fontSize: 18 }}>{b.email}</div>
-                  <span style={styles?.pill}>⏱ {fmt(msUntil(b.ends_at))}</span>
+              <div key={b.id} className="listItem">
+                <div className="row between">
+                  <div className="strong">{b.email}</div>
+                  <span className="chip">{fmt(msUntil(b.ends_at))}</span>
                 </div>
-                <div style={styles?.muted}>
+                <div className="muted">
                   Started: {prettyTime(b.started_at)} • Ends: {prettyTime(b.ends_at)}
                 </div>
               </div>
@@ -276,35 +238,12 @@ export default function BreakLockPage({ app, boardMode = false }) {
           </div>
         </div>
 
-        <div style={styles?.card}>
-          <div style={styles?.h3row}>
-            <h3 style={styles?.h3}>Today’s break stats</h3>
-            <span style={styles?.pill}>{today.length} total breaks</span>
+        <div className="card">
+          <div className="row between">
+            <h3 className="h3">Today’s break stats</h3>
+            <span className="chip">{today.length} total breaks</span>
           </div>
-
-          {people.length === 0 ? (
-            <div style={styles?.muted}>No breaks recorded today yet.</div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {people.map((p) => (
-                <div key={p.email} style={styles?.listItem}>
-                  <div style={{ fontWeight: 1000 }}>{p.email}</div>
-                  <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
-                    {p.breaks.map((br) => (
-                      <div key={br.id} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                        <div style={styles?.muted}>
-                          {prettyTime(br.started_at)} → {br.ended_at ? prettyTime(br.ended_at) : "—"}
-                        </div>
-                        <div style={{ fontWeight: 900 }}>
-                          {br.end_reason || (br.ended_at ? "ended" : "active")}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="muted">This section depends on get_breaks_today_v1().</div>
         </div>
       </div>
     );
@@ -313,65 +252,73 @@ export default function BreakLockPage({ app, boardMode = false }) {
   // ===== NORMAL PAGE =====
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={styles?.card}>
-        <div style={styles?.h3row}>
-          <h3 style={styles?.h3}>BreakLock</h3>
-          <span style={styles?.badge}>{isAdmin ? "Admin" : "Employee"}</span>
+      <div className="card">
+        <div className="row between wrap">
+          <h3 className="h3">BreakLock</h3>
+          <span className="chip">{isAdmin ? "Admin" : "Employee"}</span>
         </div>
 
-        <p style={styles?.muted}>
-          Break duration is <b>{DEFAULT_DURATION_MIN} minutes</b>. Up to <b>{capacity}</b> people can be on break at once.
+        <p className="muted" style={{ marginTop: 6 }}>
+          Break duration is <b>{DEFAULT_DURATION_MIN} minutes</b>. Up to <b>{capacity}</b> people can be on break.
         </p>
 
-        {msg && <div style={{ marginTop: 10, fontWeight: 900, whiteSpace: "pre-wrap" }}>{msg}</div>}
+        {msg && <div className="notice">{msg}</div>}
 
         <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-          <div style={styles?.listItem}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ fontWeight: 900 }}>
-                {active.length > 0 ? `🟢 On break: ${active.length}/${capacity}` : "✅ No one on break"}
+          <div className="listItem">
+            <div className="row between wrap">
+              <div className="strong">
+                {active.length > 0 ? `On break: ${active.length}/${capacity}` : "No one on break"}
               </div>
-              <span style={styles?.pill}>{locked ? "Locked" : "Unlocked"}</span>
+              <span className="chip">{locked ? "Locked" : "Unlocked"}</span>
             </div>
 
             {active.length > 0 && (
-              <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+              <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
                 {active.map((b) => (
-                  <div key={b.id} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                    <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis" }}>{b.email}</div>
-                    <div style={{ fontWeight: 900 }}>{fmt(msUntil(b.ends_at))}</div>
+                  <div key={b.id} className="row between">
+                    <div className="strong">{b.email}</div>
+                    <div className="strong">{fmt(msUntil(b.ends_at))}</div>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          <div style={styles?.listItem}>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <button style={styles?.btnPrimary} onClick={startBreak} disabled={busy || !canStart}>
-                {busy ? "Working…" : myActive ? "On Break" : "Start Break"}
+          <div className="listItem">
+            <div className="row wrap" style={{ gap: 10 }}>
+              <button className="btn primary" onClick={startBreak} disabled={busy || !canStart}>
+                {busy ? "Working…" : myActive ? "On break" : "Start break"}
               </button>
 
               {myActive && (
-                <button style={styles?.btn} onClick={endMyBreak} disabled={busy}>
-                  End My Break
+                <button className="btn" onClick={endMyBreak} disabled={busy}>
+                  End my break
                 </button>
               )}
 
-              <button style={styles?.btn} onClick={() => load({ quiet: false })} disabled={busy}>
+              <button className="btn" onClick={onEnablePush} disabled={busy}>
+                Enable notifications
+              </button>
+
+              <button className="btn" onClick={onTestPush} disabled={busy}>
+                Send test push
+              </button>
+
+              <button className="btn" onClick={() => load({ quiet: false })} disabled={busy}>
                 Refresh
               </button>
 
               {myActive && (
-                <span style={styles?.pill}>
-                  Your time left: <b>{fmt(myRemainingMs)}</b>
+                <span className="chip">
+                  Time left: <b>{fmt(myRemainingMs)}</b>
                 </span>
               )}
             </div>
 
             {!myActive && locked && (
-              <div style={{ marginTop: 8, ...styles?.muted }}>
-                ❌ Breaks locked — capacity reached. Wait until someone’s timer ends.
+              <div className="muted" style={{ marginTop: 10 }}>
+                Breaks locked — capacity reached.
               </div>
             )}
           </div>
@@ -379,24 +326,24 @@ export default function BreakLockPage({ app, boardMode = false }) {
       </div>
 
       {isAdmin && (
-        <div style={styles?.card}>
-          <div style={styles?.h3row}>
-            <h3 style={styles?.h3}>Admin controls</h3>
-            <span style={styles?.pill}>Capacity: {capacity}</span>
+        <div className="card">
+          <div className="row between">
+            <h3 className="h3">Admin controls</h3>
+            <span className="chip">Capacity: {capacity}</span>
           </div>
 
-          <div style={styles?.list}>
-            {active.length === 0 && <div style={styles?.muted}>No active breaks.</div>}
+          <div style={{ display: "grid", gap: 10 }}>
+            {active.length === 0 && <div className="muted">No active breaks.</div>}
 
             {active.map((b) => (
-              <div key={b.id} style={styles?.listItem}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ fontWeight: 900 }}>{b.email}</div>
-                  <span style={styles?.pill}>⏱ {fmt(msUntil(b.ends_at))}</span>
+              <div key={b.id} className="listItem">
+                <div className="row between">
+                  <div className="strong">{b.email}</div>
+                  <span className="chip">{fmt(msUntil(b.ends_at))}</span>
                 </div>
 
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                  <button style={styles?.btnWarn} onClick={() => adminEndBreak(b)} disabled={busy}>
+                <div style={{ marginTop: 10 }}>
+                  <button className="btn warn" onClick={() => adminEndBreak(b)} disabled={busy}>
                     Override end break
                   </button>
                 </div>
