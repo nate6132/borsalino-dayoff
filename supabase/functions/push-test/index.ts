@@ -2,10 +2,14 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import webpush from "https://esm.sh/web-push@3.6.7";
 
+const allowedOrigin = "https://borsalinodayoff.com";
+
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": allowedOrigin,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
+  "Vary": "Origin",
 };
 
 function json(data: unknown, status = 200) {
@@ -16,9 +20,9 @@ function json(data: unknown, status = 200) {
 }
 
 serve(async (req) => {
-  // ✅ Handle CORS preflight
+  // ✅ Preflight must succeed with 200 BEFORE anything else
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders, status: 200 });
+    return new Response("ok", { status: 200, headers: corsHeaders });
   }
 
   try {
@@ -33,8 +37,10 @@ serve(async (req) => {
       return json({ ok: false, error: "missing_vapid_env" }, 500);
     }
 
-    // Authenticate caller (must be logged in)
+    // Must be logged in (supabase.functions.invoke sends Authorization automatically)
     const authHeader = req.headers.get("Authorization") || "";
+    if (!authHeader) return json({ ok: false, error: "missing_authorization_header" }, 401);
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
     });
@@ -44,7 +50,6 @@ serve(async (req) => {
 
     const userId = userData.user.id;
 
-    // Load subscriptions for this user
     const { data: subs, error: subErr } = await supabase
       .from("push_subscriptions")
       .select("endpoint,p256dh,auth")

@@ -46,12 +46,17 @@ export async function enablePush() {
   }
 
   // 6) Save subscription to DB (ONLY columns that exist)
-  const { error } = await supabase.from("push_subscriptions").upsert({
-    user_id: session.user.id,
-    endpoint: json.endpoint,
-    p256dh: json.keys.p256dh,
-    auth: json.keys.auth,
-  });
+ const { error } = await supabase
+  .from("push_subscriptions")
+  .upsert(
+    {
+      user_id: session.user.id,
+      endpoint: sub.endpoint,
+      p256dh: keys.p256dh,
+      auth: keys.auth,
+    },
+    { onConflict: "endpoint" }
+  );
 
   if (error) throw new Error(`DB save failed: ${error.message}`);
 
