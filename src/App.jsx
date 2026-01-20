@@ -185,6 +185,7 @@ export default function App() {
     });
 
     return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadProfileStuff(userId) {
@@ -222,6 +223,7 @@ export default function App() {
 
   useEffect(() => {
     if (session) loadRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   async function refreshDaysInfo() {
@@ -349,14 +351,49 @@ export default function App() {
     }
   }
 
-  // ✅ NEW: call the edge function test using the already-configured Supabase client
+  // ✅ NEW: direct fetch with apikey + Authorization so the gateway stops blocking preflight
   async function onSendTestPush() {
     try {
       setPushBusy(true);
-      const { data, error } = await supabase.functions.invoke("push-test", { body: {} });
-      if (error) throw error;
-      console.log("push-test result:", data);
-      alert("Test push triggered ✅ Check for a notification (and console).");
+
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess?.session?.access_token;
+
+      if (!token) {
+        alert("No access token found. Log out and log back in.");
+        return;
+      }
+
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      if (!anonKey) {
+        alert("Missing VITE_SUPABASE_ANON_KEY in your Vercel env vars.");
+        return;
+      }
+
+      const url = `${supabase.supabaseUrl}/functions/v1/push-test`;
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: anonKey,
+          Authorization: `Bearer ${token}`,
+        },
+        body: "{}",
+      });
+
+      const text = await res.text();
+      let payload;
+      try { payload = JSON.parse(text); } catch { payload = text; }
+
+      console.log("push-test status:", res.status, payload);
+
+      if (!res.ok) {
+        alert(`push-test failed (${res.status}): ${typeof payload === "string" ? payload : (payload?.error || "unknown")}`);
+        return;
+      }
+
+      alert("Test push triggered ✅ Check for a notification.");
     } catch (e) {
       console.error(e);
       alert(e?.message || "Test push failed");
@@ -572,7 +609,6 @@ export default function App() {
                   {pushBusy ? "Working…" : "Enable Notifications"}
                 </button>
 
-                {/* ✅ NEW BUTTON */}
                 <button style={styles.btn} onClick={onSendTestPush} disabled={pushBusy}>
                   {pushBusy ? "Working…" : "Send Test Push"}
                 </button>
