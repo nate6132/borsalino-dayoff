@@ -7,7 +7,7 @@ import { ThemeSupa } from "@supabase/auth-ui-shared";
 import BreakLockPage from "./pages/BreakLockPage.jsx";
 import SuggestionsPage from "./pages/SuggestionsPage.jsx";
 import DayOffPage from "./pages/DayOffPage.jsx";
-import SettingsPage from "./pages/SettingsPage.jsx";
+import SettingsPage from "./SettingsPage.jsx";
 import { enablePush, sendTestPush } from "./push";
 
 function greeting() {
