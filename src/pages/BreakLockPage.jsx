@@ -24,17 +24,18 @@ function prettyTime(ts) {
 }
 
 export default function BreakLockPage({ app, boardMode = false }) {
-  const { supabase, session, isAdmin, styles } = app || {};
-  const DEFAULT_DURATION_MIN = 30;
+  const { supabase, session, profile } = app || {};
+  const org = profile?.org;
+  const isAdmin = !!profile?.is_admin;
 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
   const [capacity, setCapacity] = useState(2);
-  const [active, setActive] = useState([]);
-  const [today, setToday] = useState([]);
+  const [durationMin, setDurationMin] = useState(30);
 
-  // 1-second ticker for countdown display
+  const [active, setActive] = useState([]);
+
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((x) => x + 1), 1000);
@@ -44,71 +45,56 @@ export default function BreakLockPage({ app, boardMode = false }) {
   const loadSeq = useRef(0);
   const actionInFlight = useRef(false);
 
-  if (!supabase || !session) {
-    return (
-      <div className="card">
-        <b>BreakLock error:</b> missing <code>supabase</code> or <code>session</code>.
-      </div>
-    );
-  }
-
   async function load({ quiet = true } = {}) {
     const seq = ++loadSeq.current;
     if (!quiet) setMsg("");
 
-    // capacity
-    {
-      const { data } = await supabase
-        .from("break_lock")
-        .select("capacity")
-        .eq("id", 1)
-        .maybeSingle();
+    if (!org) return;
 
-      if (seq === loadSeq.current && typeof data?.capacity === "number") {
-        setCapacity(data.capacity);
-      }
+    // org settings
+    const { data: os } = await supabase
+      .from("org_settings")
+      .select("break_capacity, break_duration_minutes")
+      .eq("org", org)
+      .single();
+
+    if (seq === loadSeq.current && os) {
+      setCapacity(os.break_capacity ?? 2);
+      setDurationMin(os.break_duration_minutes ?? 30);
     }
 
-    // active via approved RPC
-    {
-      const { data, error } = await supabase.rpc("get_active_breaks_v1");
-      if (seq !== loadSeq.current) return;
+    // active via RPC (already scoped by org in SQL we gave you)
+    const { data, error } = await supabase.rpc("get_active_breaks_v1");
+    if (seq !== loadSeq.current) return;
 
-      if (error) setMsg(`Active load error: ${error.message}`);
-      else setActive(data || []);
-    }
-
-    // optional today stats RPC (leave if you have it)
-    {
-      const { data } = await supabase.rpc("get_breaks_today_v1");
-      if (seq === loadSeq.current && data) setToday(data);
-    }
+    if (error) setMsg(error.message);
+    else setActive(data || []);
   }
 
   useEffect(() => {
-    load({ quiet: true });
+    if (session && org) load({ quiet: true });
     // eslint-disable-next-line
-  }, []);
+  }, [session, org]);
 
   useEffect(() => {
+    if (!supabase || !org) return;
+
     const ch = supabase
       .channel("breaklock-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "active_breaks" }, () => {
-        if (!actionInFlight.current) load({ quiet: true });
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "break_lock" }, () => {
         if (!actionInFlight.current) load({ quiet: true });
       })
       .subscribe();
 
     return () => supabase.removeChannel(ch);
     // eslint-disable-next-line
-  }, []);
+  }, [supabase, org]);
 
   const myEmail = (session?.user?.email || "").trim().toLowerCase();
-  const myActive = useMemo(() => {
-    return (active || []).find((b) => (b.email || "").trim().toLowerCase() === myEmail) || null;
-  }, [active, myEmail]);
+  const myActive = useMemo(
+    () => (active || []).find((b) => (b.email || "").trim().toLowerCase() === myEmail) || null,
+    [active, myEmail]
+  );
 
   const myRemainingMs = useMemo(() => msUntil(myActive?.ends_at), [myActive?.ends_at, tick]);
 
@@ -125,15 +111,19 @@ export default function BreakLockPage({ app, boardMode = false }) {
     setBusy(true);
     actionInFlight.current = true;
 
-    const { error } = await supabase.rpc("start_break_v3");
+    const { data, error } = await supabase.rpc("start_break_v3");
     setBusy(false);
 
     if (error) {
       actionInFlight.current = false;
       return setMsg(`Start error: ${error.message}`);
     }
+    if (data?.ok === false && data?.error === "already_active") {
+      actionInFlight.current = false;
+      return setMsg("You’re already on break.");
+    }
 
-    setMsg("Break started.");
+    setMsg("Break started ✅");
     setTimeout(() => {
       actionInFlight.current = false;
       load({ quiet: true });
@@ -152,7 +142,7 @@ export default function BreakLockPage({ app, boardMode = false }) {
       return setMsg(`End error: ${error.message}`);
     }
 
-    setMsg("Break ended.");
+    setMsg("Break ended ✅");
     setTimeout(() => {
       actionInFlight.current = false;
       load({ quiet: true });
@@ -161,7 +151,6 @@ export default function BreakLockPage({ app, boardMode = false }) {
 
   async function adminEndBreak(row) {
     if (!isAdmin) return;
-
     if (!confirm(`Override end break for ${row.email}?`)) return;
 
     setBusy(true);
@@ -175,7 +164,7 @@ export default function BreakLockPage({ app, boardMode = false }) {
       return setMsg(`Admin end error: ${error.message}`);
     }
 
-    setMsg("Admin override ended the break.");
+    setMsg("Override ended ✅");
     setTimeout(() => {
       actionInFlight.current = false;
       load({ quiet: true });
@@ -184,46 +173,56 @@ export default function BreakLockPage({ app, boardMode = false }) {
 
   async function onEnablePush() {
     try {
+      setBusy(true);
       await enablePush();
-      setMsg("Notifications enabled.");
+      setMsg("Notifications enabled ✅");
     } catch (e) {
-      setMsg(e?.message || "Failed to enable notifications.");
+      setMsg(e?.message || "Failed to enable notifications");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function onTestPush() {
     try {
+      setBusy(true);
       const res = await sendTestPush();
-      setMsg(`Push sent. (sent: ${res?.sent ?? "?"})`);
+      setMsg(`Test push sent ✅ (sent: ${res?.sent ?? "?"})`);
     } catch (e) {
-      setMsg(e?.message || "Test push failed.");
+      setMsg(e?.message || "Test push failed");
+    } finally {
+      setBusy(false);
     }
   }
 
-  // ===== TV BOARD =====
+  if (!supabase || !session) return <div className="card">Missing session.</div>;
+  if (!org) return <div className="card">Your org isn’t set yet. Go to Settings.</div>;
+
+  // Board mode
   if (boardMode) {
     return (
-      <div style={{ display: "grid", gap: 14 }}>
+      <div className="stack">
         <div className="card">
-          <div className="row between">
-            <h3 className="h3">BreakLock — TV Board</h3>
-            <span className="chip">Capacity: <b>{capacity}</b></span>
+          <div className="row between wrap">
+            <h3 className="h3">BreakLock — TV</h3>
+            <span className="chip soft">
+              {org === "atica" ? "Atica" : "Borsalino"} • Capacity {capacity}
+            </span>
           </div>
 
-          <div className="row between wrap">
+          <div className="row between wrap" style={{ marginTop: 10 }}>
             <div className="strong">
-              {active.length > 0 ? `${active.length} currently on break` : "No one is on break"}
+              {active.length ? `🟢 ${active.length} currently on break` : "✅ Nobody on break"}
             </div>
             <div className="strong">
-              {active.length > 0 ? `Next ends in: ${fmt(soonestRemainingMs)}` : "Unlocked"}
+              {active.length ? `Next ends in ${fmt(soonestRemainingMs)}` : "Unlocked"}
             </div>
           </div>
 
           {msg && <div className="notice">{msg}</div>}
 
-          <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-            {active.length === 0 && <div className="muted">Waiting for someone to start a break…</div>}
-
+          <div className="list" style={{ marginTop: 12 }}>
+            {active.length === 0 && <div className="muted">Waiting for someone to start…</div>}
             {active.map((b) => (
               <div key={b.id} className="listItem">
                 <div className="row between">
@@ -231,53 +230,46 @@ export default function BreakLockPage({ app, boardMode = false }) {
                   <span className="chip">{fmt(msUntil(b.ends_at))}</span>
                 </div>
                 <div className="muted">
-                  Started: {prettyTime(b.started_at)} • Ends: {prettyTime(b.ends_at)}
+                  {prettyTime(b.started_at)} → {prettyTime(b.ends_at)}
                 </div>
               </div>
             ))}
           </div>
         </div>
-
-        <div className="card">
-          <div className="row between">
-            <h3 className="h3">Today’s break stats</h3>
-            <span className="chip">{today.length} total breaks</span>
-          </div>
-          <div className="muted">This section depends on get_breaks_today_v1().</div>
-        </div>
       </div>
     );
   }
 
-  // ===== NORMAL PAGE =====
+  // Normal
   return (
-    <div style={{ display: "grid", gap: 14 }}>
+    <div className="stack">
       <div className="card">
         <div className="row between wrap">
-          <h3 className="h3">BreakLock</h3>
-          <span className="chip">{isAdmin ? "Admin" : "Employee"}</span>
+          <div>
+            <h3 className="h3">BreakLock</h3>
+            <p className="muted">
+              {durationMin} minutes • capacity {capacity} • {org === "atica" ? "Atica" : "Borsalino"}
+            </p>
+          </div>
+          <span className="chip soft">{isAdmin ? "Admin" : "Employee"}</span>
         </div>
-
-        <p className="muted" style={{ marginTop: 6 }}>
-          Break duration is <b>{DEFAULT_DURATION_MIN} minutes</b>. Up to <b>{capacity}</b> people can be on break.
-        </p>
 
         {msg && <div className="notice">{msg}</div>}
 
-        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+        <div className="grid" style={{ marginTop: 12 }}>
           <div className="listItem">
             <div className="row between wrap">
               <div className="strong">
-                {active.length > 0 ? `On break: ${active.length}/${capacity}` : "No one on break"}
+                {active.length ? `On break: ${active.length}/${capacity}` : "✅ No one on break"}
               </div>
-              <span className="chip">{locked ? "Locked" : "Unlocked"}</span>
+              <span className="chip">{locked ? "Locked" : "Open"}</span>
             </div>
 
             {active.length > 0 && (
-              <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+              <div className="list" style={{ marginTop: 10 }}>
                 {active.map((b) => (
                   <div key={b.id} className="row between">
-                    <div className="strong">{b.email}</div>
+                    <div className="muted">{b.email}</div>
                     <div className="strong">{fmt(msUntil(b.ends_at))}</div>
                   </div>
                 ))}
@@ -288,7 +280,7 @@ export default function BreakLockPage({ app, boardMode = false }) {
           <div className="listItem">
             <div className="row wrap" style={{ gap: 10 }}>
               <button className="btn primary" onClick={startBreak} disabled={busy || !canStart}>
-                {busy ? "Working…" : myActive ? "On break" : "Start break"}
+                {myActive ? "On break" : busy ? "Working…" : "Start break"}
               </button>
 
               {myActive && (
@@ -305,12 +297,12 @@ export default function BreakLockPage({ app, boardMode = false }) {
                 Send test push
               </button>
 
-              <button className="btn" onClick={() => load({ quiet: false })} disabled={busy}>
+              <button className="btn ghost" onClick={() => load({ quiet: false })} disabled={busy}>
                 Refresh
               </button>
 
               {myActive && (
-                <span className="chip">
+                <span className="chip soft">
                   Time left: <b>{fmt(myRemainingMs)}</b>
                 </span>
               )}
@@ -318,7 +310,7 @@ export default function BreakLockPage({ app, boardMode = false }) {
 
             {!myActive && locked && (
               <div className="muted" style={{ marginTop: 10 }}>
-                Breaks locked — capacity reached.
+                Breaks are locked — wait for someone to finish.
               </div>
             )}
           </div>
@@ -327,26 +319,22 @@ export default function BreakLockPage({ app, boardMode = false }) {
 
       {isAdmin && (
         <div className="card">
-          <div className="row between">
-            <h3 className="h3">Admin controls</h3>
-            <span className="chip">Capacity: {capacity}</span>
+          <div className="row between wrap">
+            <h3 className="h3">Admin override</h3>
+            <span className="chip">Active: {active.length}</span>
           </div>
 
-          <div style={{ display: "grid", gap: 10 }}>
+          <div className="list" style={{ marginTop: 12 }}>
             {active.length === 0 && <div className="muted">No active breaks.</div>}
-
             {active.map((b) => (
               <div key={b.id} className="listItem">
                 <div className="row between">
                   <div className="strong">{b.email}</div>
                   <span className="chip">{fmt(msUntil(b.ends_at))}</span>
                 </div>
-
-                <div style={{ marginTop: 10 }}>
-                  <button className="btn warn" onClick={() => adminEndBreak(b)} disabled={busy}>
-                    Override end break
-                  </button>
-                </div>
+                <button className="btn warn" onClick={() => adminEndBreak(b)} disabled={busy}>
+                  Override end
+                </button>
               </div>
             ))}
           </div>

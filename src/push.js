@@ -2,6 +2,11 @@ import { supabase } from "./supabase";
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 
+function requireEnv(val, name) {
+  if (!val) throw new Error(`Missing ${name}. Add it to Vercel env vars (.env.local for dev).`);
+  return val;
+}
+
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -12,24 +17,20 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 async function ensureServiceWorker() {
-  if (!("serviceWorker" in navigator)) throw new Error("Service workers not supported in this browser.");
+  if (!("serviceWorker" in navigator)) throw new Error("Service workers not supported.");
   const reg = await navigator.serviceWorker.register("/sw.js");
   await navigator.serviceWorker.ready;
   return reg;
 }
 
-function requireEnv(val, name) {
-  if (!val) throw new Error(`Missing ${name}. Add it to Vercel env vars (and .env.local for dev).`);
-  return val;
-}
-
 export async function enablePush() {
-  if (!("Notification" in window)) throw new Error("Notifications not supported in this browser.");
-  if (!("PushManager" in window)) throw new Error("Push not supported in this browser.");
   requireEnv(VAPID_PUBLIC_KEY, "VITE_VAPID_PUBLIC_KEY");
 
+  if (!("Notification" in window)) throw new Error("Notifications not supported.");
+  if (!("PushManager" in window)) throw new Error("Push not supported.");
+
   const permission = await Notification.requestPermission();
-  if (permission !== "granted") throw new Error("Notifications permission was not granted.");
+  if (permission !== "granted") throw new Error("Notifications permission not granted.");
 
   const reg = await ensureServiceWorker();
 
@@ -46,9 +47,7 @@ export async function enablePush() {
   const p256dh = json.keys?.p256dh;
   const auth = json.keys?.auth;
 
-  if (!endpoint || !p256dh || !auth) {
-    throw new Error("Push subscription missing endpoint/keys (p256dh/auth).");
-  }
+  if (!endpoint || !p256dh || !auth) throw new Error("Push subscription missing endpoint/keys.");
 
   const { data: userData, error: userErr } = await supabase.auth.getUser();
   if (userErr || !userData?.user) throw new Error("Not logged in.");
@@ -57,25 +56,15 @@ export async function enablePush() {
     .from("push_subscriptions")
     .upsert({ user_id: userData.user.id, endpoint, p256dh, auth }, { onConflict: "endpoint" });
 
-  if (upsertErr) {
-    throw new Error(`Failed to save push subscription: ${upsertErr.message}`);
-  }
+  if (upsertErr) throw new Error(upsertErr.message);
 
   return { ok: true };
 }
 
 export async function sendTestPush() {
-  // Uses your Supabase client URL internally — no FUNCTIONS_URL env needed.
   const { data, error } = await supabase.functions.invoke("push-send", {
-    body: {
-      title: "BreakLock",
-      body: "Test push ✅",
-      url: "/breaklock",
-    },
+    body: { title: "BreakLock", body: "Test push ✅", url: "/breaks" },
   });
-
-  if (error) {
-    throw new Error(error.message || "push-send failed");
-  }
+  if (error) throw new Error(error.message || "push-send failed");
   return data;
 }
