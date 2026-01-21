@@ -38,14 +38,34 @@ function NavItem({ to, label, right }) {
   );
 }
 
+function safeOrgLabel(org) {
+  if (org === "atica") return "Atica";
+  return "Borsalino";
+}
+
 export default function App() {
   const { toasts, pushToast } = useToasts();
 
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null); // { display_name, is_admin, annual_allowance, org }
 
+  // Admin-only view switcher
+  const [orgView, setOrgView] = useState("all"); // "all" | "borsalino" | "atica"
+
   const isAdmin = !!profile?.is_admin;
-  const org = profile?.org || "borsalino"; // default
+
+  // Employee org is fixed by profile; Admin can switch org filter (including "all")
+  const orgFilter = useMemo(() => {
+    const pOrg = (profile?.org || "borsalino").toLowerCase();
+    if (!isAdmin) return pOrg;
+    return orgView; // admin: "all" | "borsalino" | "atica"
+  }, [isAdmin, orgView, profile?.org]);
+
+  // Used only for chips/greeting context (for admin we show "All orgs" when applicable)
+  const orgLabel = useMemo(() => {
+    if (isAdmin && orgFilter === "all") return "All orgs";
+    return safeOrgLabel(orgFilter);
+  }, [isAdmin, orgFilter]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -53,7 +73,9 @@ export default function App() {
       if (data.session) loadProfile(data.session.user.id);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
       if (newSession) loadProfile(newSession.user.id);
       else setProfile(null);
@@ -77,12 +99,17 @@ export default function App() {
       return;
     }
 
-    setProfile({
+    const next = {
       display_name: data?.display_name || "",
       is_admin: !!data?.is_admin,
       annual_allowance: data?.annual_allowance ?? 14,
-      org: data?.org || "borsalino",
-    });
+      org: (data?.org || "borsalino").toLowerCase(),
+    };
+
+    setProfile(next);
+
+    // If admin logs in, keep orgView as-is. If non-admin, force orgView to "all" (doesn't matter)
+    if (!next.is_admin) setOrgView("all");
   }
 
   async function updateProfile(patch) {
@@ -121,12 +148,14 @@ export default function App() {
             <div className="card">
               <div className="kpiRow" style={{ alignItems: "center" }}>
                 <div>
-                  <h1 className="h1" style={{ marginBottom: 6 }}>Welcome back</h1>
-                  <p className="sub">
-                    Sign in with your work email to access DayOff + BreakLock.
-                  </p>
+                  <h1 className="h1" style={{ marginBottom: 6 }}>
+                    Welcome back
+                  </h1>
+                  <p className="sub">Sign in with your work email to access DayOff + BreakLock.</p>
                 </div>
-                <span className="pill" style={{ marginLeft: "auto" }}>Borsalino • Atica</span>
+                <span className="pill" style={{ marginLeft: "auto" }}>
+                  Borsalino • Atica
+                </span>
               </div>
 
               <div style={{ marginTop: 14 }}>
@@ -159,7 +188,6 @@ export default function App() {
   }
 
   const name = (profile?.display_name || "").trim() || "there";
-  const orgLabel = org === "atica" ? "Atica" : "Borsalino";
 
   return (
     <BrowserRouter>
@@ -170,7 +198,9 @@ export default function App() {
             <img className="brandLogo" src="/logo.png" alt="Logo" />
             <div style={{ minWidth: 0 }}>
               <h3 className="brandTitle">Internal Portal</h3>
-              <p className="brandSub">{orgLabel} • {isAdmin ? "Admin" : "Employee"}</p>
+              <p className="brandSub">
+                {orgLabel} • {isAdmin ? "Admin" : "Employee"}
+              </p>
             </div>
           </div>
 
@@ -188,9 +218,31 @@ export default function App() {
           <div className="hr" />
 
           <div className="grid" style={{ gap: 10 }}>
-            <button className="btn" onClick={onEnablePush}>Enable notifications</button>
-            <button className="btn" onClick={onSendTestPush}>Send test push</button>
-            <button className="btn" onClick={() => supabase.auth.signOut()}>Log out</button>
+            {/* ADMIN ORG SWITCHER */}
+            {isAdmin && (
+              <div>
+                <div className="label">Viewing org</div>
+                <select
+                  className="input"
+                  value={orgView}
+                  onChange={(e) => setOrgView(e.target.value)}
+                >
+                  <option value="all">All orgs</option>
+                  <option value="borsalino">Borsalino</option>
+                  <option value="atica">Atica</option>
+                </select>
+              </div>
+            )}
+
+            <button className="btn" onClick={onEnablePush}>
+              Enable notifications
+            </button>
+            <button className="btn" onClick={onSendTestPush}>
+              Send test push
+            </button>
+            <button className="btn" onClick={() => supabase.auth.signOut()}>
+              Log out
+            </button>
           </div>
         </aside>
 
@@ -199,10 +251,10 @@ export default function App() {
           <div className="container">
             <div className="header">
               <div>
-                <h1 className="h1">{greeting()}, {name}</h1>
-                <p className="sub">
-                  Everything you need — clean, fast, and simple.
-                </p>
+                <h1 className="h1">
+                  {greeting()}, {name}
+                </h1>
+                <p className="sub">Everything you need — clean, fast, and simple.</p>
               </div>
 
               <div className="actions">
@@ -233,12 +285,18 @@ export default function App() {
                     </div>
 
                     <div className="card">
-                      <h2 className="h2">Your org</h2>
-                      <p className="sub">
-                        You’re currently on <b>{orgLabel}</b>. This controls which rules you see.
-                      </p>
+                      <h2 className="h2">What you’re viewing</h2>
+                      {isAdmin ? (
+                        <p className="sub">
+                          You’re viewing <b>{orgLabel}</b>. Change it anytime from the sidebar.
+                        </p>
+                      ) : (
+                        <p className="sub">
+                          You’re on <b>{safeOrgLabel(profile?.org || "borsalino")}</b>. Your org is fixed by your profile.
+                        </p>
+                      )}
                       <p className="sub" style={{ marginTop: 10 }}>
-                        Change it any time in <b>Settings</b>.
+                        Admins can switch between orgs (or All).
                       </p>
                     </div>
                   </div>
@@ -247,31 +305,89 @@ export default function App() {
 
               <Route
                 path="/dayoff"
-                element={<DayOffPage app={{ supabase, session, profile, isAdmin, org, pushToast }} />}
+                element={
+                  <DayOffPage
+                    app={{
+                      supabase,
+                      session,
+                      profile,
+                      isAdmin,
+                      orgFilter, // ✅ IMPORTANT
+                      pushToast,
+                    }}
+                  />
+                }
               />
 
               <Route
                 path="/breaklock"
-                element={<BreakLockPage app={{ supabase, session, profile, isAdmin, org, pushToast }} boardMode={false} />}
+                element={
+                  <BreakLockPage
+                    app={{
+                      supabase,
+                      session,
+                      profile,
+                      isAdmin,
+                      orgFilter, // ✅ IMPORTANT
+                      pushToast,
+                    }}
+                    boardMode={false}
+                  />
+                }
               />
 
               <Route
                 path="/breaklock/board"
                 element={
-                  isAdmin
-                    ? <BreakLockPage app={{ supabase, session, profile, isAdmin, org, pushToast }} boardMode />
-                    : <Navigate to="/breaklock" replace />
+                  isAdmin ? (
+                    <BreakLockPage
+                      app={{
+                        supabase,
+                        session,
+                        profile,
+                        isAdmin,
+                        orgFilter, // ✅ IMPORTANT
+                        pushToast,
+                      }}
+                      boardMode
+                    />
+                  ) : (
+                    <Navigate to="/breaklock" replace />
+                  )
                 }
               />
 
               <Route
                 path="/suggestions"
-                element={<SuggestionsPage app={{ supabase, session, isAdmin, org, pushToast }} />}
+                element={
+                  <SuggestionsPage
+                    app={{
+                      supabase,
+                      session,
+                      profile,
+                      isAdmin,
+                      orgFilter, // ✅ IMPORTANT
+                      pushToast,
+                    }}
+                  />
+                }
               />
 
               <Route
                 path="/settings"
-                element={<SettingsPage app={{ supabase, session, profile, updateProfile, org, pushToast }} />}
+                element={
+                  <SettingsPage
+                    app={{
+                      supabase,
+                      session,
+                      profile,
+                      isAdmin,
+                      updateProfile,
+                      orgFilter,
+                      pushToast,
+                    }}
+                  />
+                }
               />
 
               <Route path="*" element={<Navigate to="/" replace />} />
