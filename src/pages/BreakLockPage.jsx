@@ -1,340 +1,258 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { enablePush, sendTestPush } from "../push";
+import { useEffect, useMemo, useState } from "react";
 
-function msUntil(ts) {
-  if (!ts) return 0;
-  const t = new Date(ts).getTime();
-  return Math.max(0, t - Date.now());
+function norm(s) {
+  return String(s || "").trim().toLowerCase();
+}
+function daysBetweenInclusive(startDate, endDate) {
+  const s = new Date(startDate + "T00:00:00");
+  const e = new Date(endDate + "T00:00:00");
+  return Math.floor((e - s) / (1000 * 60 * 60 * 24)) + 1;
 }
 
-function fmt(ms) {
-  const total = Math.ceil(ms / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
+export default function DayOffPage({ app }) {
+  const { supabase, session, profile, isAdmin, org, pushToast } = app || {};
 
-function prettyTime(ts) {
-  if (!ts) return "—";
-  try {
-    return new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  } catch {
-    return "—";
-  }
-}
+  const allowance = profile?.annual_allowance ?? 14;
 
-export default function BreakLockPage({ app, boardMode = false }) {
-  const { supabase, session, profile } = app || {};
-  const org = profile?.org;
-  const isAdmin = !!profile?.is_admin;
-
+  const [requests, setRequests] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
 
-  const [capacity, setCapacity] = useState(2);
-  const [durationMin, setDurationMin] = useState(30);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [reason, setReason] = useState("");
 
-  const [active, setActive] = useState([]);
+  const myEmail = (session?.user?.email || "").trim().toLowerCase();
 
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((x) => x + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
+  const myRequests = useMemo(
+    () => (requests || []).filter((r) => String(r.email || "").trim().toLowerCase() === myEmail),
+    [requests, myEmail]
+  );
 
-  const loadSeq = useRef(0);
-  const actionInFlight = useRef(false);
+  const pendingForAdmin = useMemo(
+    () => (requests || []).filter((r) => norm(r.status) === "pending"),
+    [requests]
+  );
 
-  async function load({ quiet = true } = {}) {
-    const seq = ++loadSeq.current;
-    if (!quiet) setMsg("");
+  const usedThisYear = useMemo(() => {
+    const y = new Date().getFullYear();
+    return myRequests
+      .filter((r) => new Date(r.start_date).getFullYear() === y)
+      .filter((r) => norm(r.status) === "approved")
+      .reduce((sum, r) => sum + daysBetweenInclusive(r.start_date, r.end_date), 0);
+  }, [myRequests]);
 
-    if (!org) return;
+  const remaining = allowance - usedThisYear;
 
-    // org settings
-    const { data: os } = await supabase
-      .from("org_settings")
-      .select("break_capacity, break_duration_minutes")
-      .eq("org", org)
-      .single();
+  async function load() {
+    if (!session) return;
 
-    if (seq === loadSeq.current && os) {
-      setCapacity(os.break_capacity ?? 2);
-      setDurationMin(os.break_duration_minutes ?? 30);
+    // If your day_off_requests table has an org column, this will work.
+    // If it doesn't, it will fail — then remove the .eq("org", org) line.
+    const q = supabase
+      .from("day_off_requests")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    // OPTIONAL org filter (comment out if your table doesn't have org)
+    // q.eq("org", org);
+
+    const { data, error } = await q;
+    if (error) {
+      console.log("LOAD REQUESTS ERROR:", error);
+      pushToast?.("DayOff load failed", error.message);
+      return;
     }
-
-    // active via RPC (already scoped by org in SQL we gave you)
-    const { data, error } = await supabase.rpc("get_active_breaks_v1");
-    if (seq !== loadSeq.current) return;
-
-    if (error) setMsg(error.message);
-    else setActive(data || []);
+    setRequests(data || []);
   }
 
   useEffect(() => {
-    if (session && org) load({ quiet: true });
+    load();
     // eslint-disable-next-line
   }, [session, org]);
 
-  useEffect(() => {
-    if (!supabase || !org) return;
+  async function submit(e) {
+    e.preventDefault();
+    if (!startDate || !endDate) return pushToast?.("Missing dates", "Pick a start and end date.");
+    if (!reason.trim()) return pushToast?.("Missing reason", "Please add a reason.");
 
-    const ch = supabase
-      .channel("breaklock-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "active_breaks" }, () => {
-        if (!actionInFlight.current) load({ quiet: true });
-      })
-      .subscribe();
+    const s = new Date(startDate + "T00:00:00");
+    const en = new Date(endDate + "T00:00:00");
+    if (en < s) return pushToast?.("Date error", "End date must be after start date.");
 
-    return () => supabase.removeChannel(ch);
-    // eslint-disable-next-line
-  }, [supabase, org]);
+    const daysRequested = daysBetweenInclusive(startDate, endDate);
+    if (daysRequested > remaining) {
+      return pushToast?.("Not enough days", `You have ${remaining} days remaining.`);
+    }
 
-  const myEmail = (session?.user?.email || "").trim().toLowerCase();
-  const myActive = useMemo(
-    () => (active || []).find((b) => (b.email || "").trim().toLowerCase() === myEmail) || null,
-    [active, myEmail]
-  );
-
-  const myRemainingMs = useMemo(() => msUntil(myActive?.ends_at), [myActive?.ends_at, tick]);
-
-  const soonestRemainingMs = useMemo(() => {
-    if (!active?.length) return 0;
-    const soonest = [...active].sort((a, b) => new Date(a.ends_at) - new Date(b.ends_at))[0];
-    return msUntil(soonest?.ends_at);
-  }, [active, tick]);
-
-  const locked = active.length >= capacity;
-  const canStart = !myActive && !locked;
-
-  async function startBreak() {
     setBusy(true);
-    actionInFlight.current = true;
 
-    const { data, error } = await supabase.rpc("start_break_v3");
+    // Include org if your table has it. If it doesn't, delete org: org
+    const payload = {
+      user_id: session.user.id,
+      email: session.user.email,
+      start_date: startDate,
+      end_date: endDate,
+      reason: reason.trim(),
+      status: "pending",
+      // org,
+    };
+
+    const { error } = await supabase.from("day_off_requests").insert(payload);
+
     setBusy(false);
 
     if (error) {
-      actionInFlight.current = false;
-      return setMsg(`Start error: ${error.message}`);
-    }
-    if (data?.ok === false && data?.error === "already_active") {
-      actionInFlight.current = false;
-      return setMsg("You’re already on break.");
+      console.log("SUBMIT ERROR:", error);
+      pushToast?.("Submit failed", error.message);
+      return;
     }
 
-    setMsg("Break started ✅");
-    setTimeout(() => {
-      actionInFlight.current = false;
-      load({ quiet: true });
-    }, 250);
+    setStartDate("");
+    setEndDate("");
+    setReason("");
+    pushToast?.("Request submitted", "Sent ✅");
+
+    await load();
   }
 
-  async function endMyBreak() {
-    setBusy(true);
-    actionInFlight.current = true;
+  async function cancel(row) {
+    if (!confirm("Cancel this request? (Only works if pending)")) return;
 
-    const { error } = await supabase.rpc("end_my_break_v1");
-    setBusy(false);
+    const { error } = await supabase.from("day_off_requests").update({ status: "cancelled" }).eq("id", row.id);
+    if (error) return pushToast?.("Cancel failed", error.message);
 
-    if (error) {
-      actionInFlight.current = false;
-      return setMsg(`End error: ${error.message}`);
-    }
-
-    setMsg("Break ended ✅");
-    setTimeout(() => {
-      actionInFlight.current = false;
-      load({ quiet: true });
-    }, 250);
+    pushToast?.("Cancelled", "Done.");
+    await load();
   }
 
-  async function adminEndBreak(row) {
-    if (!isAdmin) return;
-    if (!confirm(`Override end break for ${row.email}?`)) return;
+  async function adminSetStatus(row, newStatus) {
+    const { error } = await supabase.from("day_off_requests").update({ status: newStatus }).eq("id", row.id);
+    if (error) return pushToast?.("Update failed", error.message);
 
-    setBusy(true);
-    actionInFlight.current = true;
+    pushToast?.("Updated", `Set to ${newStatus}.`);
 
-    const { error } = await supabase.rpc("breaklock_admin_end", { p_break_id: row.id });
-    setBusy(false);
-
-    if (error) {
-      actionInFlight.current = false;
-      return setMsg(`Admin end error: ${error.message}`);
+    // keep your email edge function if you want
+    if (["approved", "denied", "revoked"].includes(newStatus)) {
+      const { error: fnErr } = await supabase.functions.invoke("send-approval-email", {
+        body: { email: row.email, start_date: row.start_date, end_date: row.end_date, status: newStatus },
+      });
+      if (fnErr) console.log("EMAIL FAILED:", fnErr);
     }
 
-    setMsg("Override ended ✅");
-    setTimeout(() => {
-      actionInFlight.current = false;
-      load({ quiet: true });
-    }, 250);
+    await load();
   }
 
-  async function onEnablePush() {
-    try {
-      setBusy(true);
-      await enablePush();
-      setMsg("Notifications enabled ✅");
-    } catch (e) {
-      setMsg(e?.message || "Failed to enable notifications");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onTestPush() {
-    try {
-      setBusy(true);
-      const res = await sendTestPush();
-      setMsg(`Test push sent ✅ (sent: ${res?.sent ?? "?"})`);
-    } catch (e) {
-      setMsg(e?.message || "Test push failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!supabase || !session) return <div className="card">Missing session.</div>;
-  if (!org) return <div className="card">Your org isn’t set yet. Go to Settings.</div>;
-
-  // Board mode
-  if (boardMode) {
-    return (
-      <div className="stack">
-        <div className="card">
-          <div className="row between wrap">
-            <h3 className="h3">BreakLock — TV</h3>
-            <span className="chip soft">
-              {org === "atica" ? "Atica" : "Borsalino"} • Capacity {capacity}
-            </span>
+  return (
+    <div className="grid">
+      <div className="card">
+        <div className="kpiRow">
+          <div className="kpi">
+            <div className="kpiTop">
+              <div className="kpiLabel">Allowance</div>
+              <span className="pill">Yearly</span>
+            </div>
+            <div className="kpiVal">{allowance} days</div>
           </div>
 
-          <div className="row between wrap" style={{ marginTop: 10 }}>
-            <div className="strong">
-              {active.length ? `🟢 ${active.length} currently on break` : "✅ Nobody on break"}
+          <div className="kpi">
+            <div className="kpiTop">
+              <div className="kpiLabel">Used</div>
+              <span className="pill">This year</span>
             </div>
-            <div className="strong">
-              {active.length ? `Next ends in ${fmt(soonestRemainingMs)}` : "Unlocked"}
-            </div>
+            <div className="kpiVal">{usedThisYear}</div>
           </div>
 
-          {msg && <div className="notice">{msg}</div>}
-
-          <div className="list" style={{ marginTop: 12 }}>
-            {active.length === 0 && <div className="muted">Waiting for someone to start…</div>}
-            {active.map((b) => (
-              <div key={b.id} className="listItem">
-                <div className="row between">
-                  <div className="strong">{b.email}</div>
-                  <span className="chip">{fmt(msUntil(b.ends_at))}</span>
-                </div>
-                <div className="muted">
-                  {prettyTime(b.started_at)} → {prettyTime(b.ends_at)}
-                </div>
-              </div>
-            ))}
+          <div className="kpi">
+            <div className="kpiTop">
+              <div className="kpiLabel">Remaining</div>
+              <span className="pill">Available</span>
+            </div>
+            <div className="kpiVal">{remaining}</div>
           </div>
         </div>
       </div>
-    );
-  }
 
-  // Normal
-  return (
-    <div className="stack">
-      <div className="card">
-        <div className="row between wrap">
-          <div>
-            <h3 className="h3">BreakLock</h3>
-            <p className="muted">
-              {durationMin} minutes • capacity {capacity} • {org === "atica" ? "Atica" : "Borsalino"}
-            </p>
-          </div>
-          <span className="chip soft">{isAdmin ? "Admin" : "Employee"}</span>
-        </div>
+      <div className="grid2">
+        <div className="card">
+          <h2 className="h2">Request time off</h2>
+          <p className="sub">Quick request. Clear approvals.</p>
 
-        {msg && <div className="notice">{msg}</div>}
-
-        <div className="grid" style={{ marginTop: 12 }}>
-          <div className="listItem">
-            <div className="row between wrap">
-              <div className="strong">
-                {active.length ? `On break: ${active.length}/${capacity}` : "✅ No one on break"}
+          <form onSubmit={submit} className="grid" style={{ marginTop: 12 }}>
+            <div className="grid2">
+              <div>
+                <div className="label">Start date</div>
+                <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
               </div>
-              <span className="chip">{locked ? "Locked" : "Open"}</span>
+              <div>
+                <div className="label">End date</div>
+                <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              </div>
             </div>
 
-            {active.length > 0 && (
-              <div className="list" style={{ marginTop: 10 }}>
-                {active.map((b) => (
-                  <div key={b.id} className="row between">
-                    <div className="muted">{b.email}</div>
-                    <div className="strong">{fmt(msUntil(b.ends_at))}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+            <div>
+              <div className="label">Reason</div>
+              <textarea className="textarea" value={reason} onChange={(e) => setReason(e.target.value)} />
+            </div>
 
-          <div className="listItem">
-            <div className="row wrap" style={{ gap: 10 }}>
-              <button className="btn primary" onClick={startBreak} disabled={busy || !canStart}>
-                {myActive ? "On break" : busy ? "Working…" : "Start break"}
+            <div className="actions">
+              <button className="btn btnPrimary" disabled={busy}>
+                {busy ? "Submitting…" : "Submit request"}
               </button>
-
-              {myActive && (
-                <button className="btn" onClick={endMyBreak} disabled={busy}>
-                  End my break
-                </button>
-              )}
-
-              <button className="btn" onClick={onEnablePush} disabled={busy}>
-                Enable notifications
-              </button>
-
-              <button className="btn" onClick={onTestPush} disabled={busy}>
-                Send test push
-              </button>
-
-              <button className="btn ghost" onClick={() => load({ quiet: false })} disabled={busy}>
+              <button type="button" className="btn" onClick={load} disabled={busy}>
                 Refresh
               </button>
-
-              {myActive && (
-                <span className="chip soft">
-                  Time left: <b>{fmt(myRemainingMs)}</b>
-                </span>
-              )}
             </div>
+          </form>
+        </div>
 
-            {!myActive && locked && (
-              <div className="muted" style={{ marginTop: 10 }}>
-                Breaks are locked — wait for someone to finish.
+        <div className="card">
+          <h2 className="h2">My requests</h2>
+          <p className="sub">{myRequests.length} total</p>
+
+          <div className="table">
+            {myRequests.length === 0 && <div className="sub">No requests yet.</div>}
+
+            {myRequests.map((r) => (
+              <div key={r.id} className="rowCard">
+                <div className="rowTop">
+                  <div style={{ fontWeight: 900 }}>{r.start_date} → {r.end_date}</div>
+                  <span className={`status ${norm(r.status) || "pending"}`}>{norm(r.status) || "pending"}</span>
+                </div>
+                <div className="sub">{r.reason}</div>
+
+                {norm(r.status) === "pending" && (
+                  <div className="actions">
+                    <button className="btn btnDanger" onClick={() => cancel(r)}>Cancel</button>
+                  </div>
+                )}
               </div>
-            )}
+            ))}
           </div>
         </div>
       </div>
 
       {isAdmin && (
         <div className="card">
-          <div className="row between wrap">
-            <h3 className="h3">Admin override</h3>
-            <span className="chip">Active: {active.length}</span>
-          </div>
+          <h2 className="h2">Admin approvals</h2>
+          <p className="sub">{pendingForAdmin.length} pending</p>
 
-          <div className="list" style={{ marginTop: 12 }}>
-            {active.length === 0 && <div className="muted">No active breaks.</div>}
-            {active.map((b) => (
-              <div key={b.id} className="listItem">
-                <div className="row between">
-                  <div className="strong">{b.email}</div>
-                  <span className="chip">{fmt(msUntil(b.ends_at))}</span>
+          <div className="table">
+            {pendingForAdmin.length === 0 && <div className="sub">No pending requests.</div>}
+
+            {pendingForAdmin.map((r) => (
+              <div key={r.id} className="rowCard">
+                <div className="rowTop">
+                  <div style={{ fontWeight: 900 }}>{r.email}</div>
+                  <span className={`status ${norm(r.status)}`}>{norm(r.status)}</span>
                 </div>
-                <button className="btn warn" onClick={() => adminEndBreak(b)} disabled={busy}>
-                  Override end
-                </button>
+                <div className="sub">{r.start_date} → {r.end_date}</div>
+                <div className="sub">{r.reason}</div>
+
+                <div className="actions">
+                  <button className="btn btnPrimary" onClick={() => adminSetStatus(r, "approved")}>Approve</button>
+                  <button className="btn btnDanger" onClick={() => adminSetStatus(r, "denied")}>Deny</button>
+                  <button className="btn btnWarn" onClick={() => adminSetStatus(r, "revoked")}>Revoke</button>
+                </div>
               </div>
             ))}
           </div>

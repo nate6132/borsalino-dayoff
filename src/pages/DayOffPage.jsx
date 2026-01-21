@@ -1,281 +1,293 @@
 import { useEffect, useMemo, useState } from "react";
+import { BrowserRouter, Routes, Route, Link, Navigate, useLocation } from "react-router-dom";
+import { supabase } from "./supabase";
+import { Auth } from "@supabase/auth-ui-react";
+import { ThemeSupa } from "@supabase/auth-ui-shared";
 
-function normalizeStatus(s) {
-  return String(s || "").trim().toLowerCase();
+import BreakLockPage from "./pages/BreakLockPage.jsx";
+import SuggestionsPage from "./pages/SuggestionsPage.jsx";
+import DayOffPage from "./pages/DayOffPage.jsx";
+import SettingsPage from "./pages/SettingsPage.jsx";
+import { enablePush, sendTestPush } from "./push";
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
 }
 
-function daysBetweenInclusive(startDate, endDate) {
-  const s = new Date(startDate + "T00:00:00");
-  const e = new Date(endDate + "T00:00:00");
-  return Math.floor((e - s) / (1000 * 60 * 60 * 24)) + 1;
+function useToasts() {
+  const [toasts, setToasts] = useState([]);
+  function pushToast(title, msg) {
+    const id = Math.random().toString(36).slice(2);
+    setToasts((t) => [{ id, title, msg }, ...t].slice(0, 3));
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3200);
+  }
+  return { toasts, pushToast };
 }
 
-export default function DayOffPage({ app }) {
-  const { supabase, session, profile } = app || {};
-  const org = profile?.org;
-
-  const [requests, setRequests] = useState([]);
-  const [daysInfo, setDaysInfo] = useState({ used: 0, allowance: 14, remaining: 14 });
-
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [reason, setReason] = useState("");
-
-  const [msg, setMsg] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const myEmail = (session?.user?.email || "").trim().toLowerCase();
-
-  const myRequests = useMemo(
-    () => (requests || []).filter((r) => String(r.email || "").trim().toLowerCase() === myEmail),
-    [requests, myEmail]
+function NavItem({ to, label, right }) {
+  const loc = useLocation();
+  const active = loc.pathname === to;
+  return (
+    <Link className={`navItem ${active ? "navItemActive" : ""}`} to={to}>
+      <span>{label}</span>
+      {right ? <span className="pill">{right}</span> : null}
+    </Link>
   );
+}
 
-  const pendingForAdmin = useMemo(
-    () => (requests || []).filter((r) => normalizeStatus(r.status) === "pending"),
-    [requests]
-  );
+export default function App() {
+  const { toasts, pushToast } = useToasts();
 
-  async function loadAllowance() {
-    if (!org) return;
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null); // { display_name, is_admin, annual_allowance, org }
 
-    const { data } = await supabase
-      .from("org_settings")
-      .select("annual_allowance")
-      .eq("org", org)
+  const isAdmin = !!profile?.is_admin;
+  const org = profile?.org || "borsalino"; // default
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      if (data.session) loadProfile(data.session.user.id);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      if (newSession) loadProfile(newSession.user.id);
+      else setProfile(null);
+    });
+
+    return () => subscription.unsubscribe();
+    // eslint-disable-next-line
+  }, []);
+
+  async function loadProfile(userId) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("display_name,is_admin,annual_allowance,org")
+      .eq("id", userId)
       .single();
 
-    const allowance = data?.annual_allowance ?? 14;
-
-    const year = new Date().getFullYear();
-
-    const { data: mine } = await supabase
-      .from("day_off_requests")
-      .select("start_date,end_date,status,org")
-      .eq("user_id", session.user.id)
-      .eq("org", org);
-
-    const used = (mine || [])
-      .filter((r) => new Date(r.start_date).getFullYear() === year)
-      .filter((r) => normalizeStatus(r.status) === "approved")
-      .reduce((sum, r) => sum + daysBetweenInclusive(r.start_date, r.end_date), 0);
-
-    setDaysInfo({ used, allowance, remaining: allowance - used });
-  }
-
-  async function loadRequests() {
-    if (!org) return;
-
-    // Everyone can load org requests, but admins can approve; if you want employee-only view,
-    // change this to filter by user_id unless admin.
-    const q = supabase
-      .from("day_off_requests")
-      .select("*")
-      .eq("org", org)
-      .order("created_at", { ascending: false });
-
-    const { data, error } = await q;
-
     if (error) {
-      console.log("loadRequests error:", error);
+      console.log("PROFILE LOAD ERROR:", error);
+      // fail softly
+      setProfile({ display_name: "", is_admin: false, annual_allowance: 14, org: "borsalino" });
       return;
     }
 
-    setRequests(data || []);
-  }
-
-  useEffect(() => {
-    if (session && org) {
-      loadRequests();
-      loadAllowance();
-    }
-    // eslint-disable-next-line
-  }, [session, org]);
-
-  async function submitRequest(e) {
-    e.preventDefault();
-    setMsg("");
-
-    if (!org) return setMsg("Your org isn’t set yet. Go to Settings.");
-    if (!startDate || !endDate) return setMsg("Pick a start and end date.");
-    if (!reason.trim()) return setMsg("Add a reason.");
-
-    const s = new Date(startDate + "T00:00:00");
-    const en = new Date(endDate + "T00:00:00");
-    if (en < s) return setMsg("End date must be the same or after the start date.");
-
-    const daysRequested = daysBetweenInclusive(startDate, endDate);
-    if (daysRequested > daysInfo.remaining) {
-      return setMsg(`Not enough remaining days. You have ${daysInfo.remaining}.`);
-    }
-
-    setBusy(true);
-
-    const { error } = await supabase.from("day_off_requests").insert({
-      user_id: session.user.id,
-      email: session.user.email,
-      org,
-      start_date: startDate,
-      end_date: endDate,
-      reason: reason.trim(),
-      status: "pending",
+    setProfile({
+      display_name: data?.display_name || "",
+      is_admin: !!data?.is_admin,
+      annual_allowance: data?.annual_allowance ?? 14,
+      org: data?.org || "borsalino",
     });
-
-    setBusy(false);
-
-    if (error) return setMsg(error.message);
-
-    setStartDate("");
-    setEndDate("");
-    setReason("");
-    setMsg("Request submitted ✅");
-
-    await loadRequests();
-    await loadAllowance();
   }
 
-  async function cancelMyRequest(row) {
-    if (!confirm("Cancel this request? (Only if still pending)")) return;
-
-    const { error } = await supabase
-      .from("day_off_requests")
-      .update({ status: "cancelled" })
-      .eq("id", row.id);
-
-    if (error) return alert(error.message);
-
-    await loadRequests();
-    await loadAllowance();
+  async function updateProfile(patch) {
+    if (!session) return;
+    const { error } = await supabase.from("profiles").update(patch).eq("id", session.user.id);
+    if (error) throw error;
+    setProfile((p) => ({ ...(p || {}), ...patch }));
   }
 
-  async function adminSetStatus(row, newStatus) {
-    if (!profile?.is_admin) return alert("Admins only");
-
-    const { error } = await supabase
-      .from("day_off_requests")
-      .update({ status: newStatus })
-      .eq("id", row.id);
-
-    if (error) return alert(error.message);
-
-    // optional: keep your existing email edge function
-    if (["approved", "denied", "revoked"].includes(newStatus)) {
-      await supabase.functions.invoke("send-approval-email", {
-        body: { email: row.email, start_date: row.start_date, end_date: row.end_date, status: newStatus },
-      });
+  async function onEnablePush() {
+    try {
+      await enablePush();
+      pushToast("Notifications", "Enabled ✅");
+    } catch (e) {
+      console.error(e);
+      pushToast("Notifications failed", e?.message || "Could not enable notifications");
     }
-
-    await loadRequests();
-    await loadAllowance();
   }
 
-  return (
-    <div className="stack">
-      <div className="card">
-        <div className="row between wrap">
-          <div>
-            <h3 className="h3">Time off</h3>
-            <p className="muted">Rules are based on your company side: {org || "—"}.</p>
-          </div>
-          <span className="chip soft">
-            {daysInfo.remaining} left / {daysInfo.allowance} total
-          </span>
-        </div>
+  async function onSendTestPush() {
+    try {
+      const res = await sendTestPush();
+      pushToast("Push sent", `Sent: ${res?.sent ?? "?"}`);
+    } catch (e) {
+      console.error(e);
+      pushToast("Push failed", e?.message || "Edge Function returned non-2xx");
+    }
+  }
 
-        <p className="muted" style={{ marginTop: 10 }}>
-          Used this year: <b>{daysInfo.used}</b>
-        </p>
-      </div>
-
-      <div className="card">
-        <div className="row between wrap">
-          <h3 className="h3">Request days off</h3>
-          <button className="btn ghost" onClick={() => { loadRequests(); loadAllowance(); }}>
-            Refresh
-          </button>
-        </div>
-
-        {msg && <div className="notice">{msg}</div>}
-
-        <form onSubmit={submitRequest} className="form">
-          <div className="grid2">
-            <div>
-              <div className="label">Start</div>
-              <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-            </div>
-            <div>
-              <div className="label">End</div>
-              <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-            </div>
-          </div>
-
-          <div>
-            <div className="label">Reason</div>
-            <textarea className="textarea" value={reason} onChange={(e) => setReason(e.target.value)} />
-          </div>
-
-          <button className="btn primary" disabled={busy}>
-            {busy ? "Submitting…" : "Submit"}
-          </button>
-        </form>
-      </div>
-
-      <div className="card">
-        <div className="row between wrap">
-          <h3 className="h3">My requests</h3>
-          <span className="chip">{myRequests.length}</span>
-        </div>
-
-        <div className="list">
-          {myRequests.length === 0 && <div className="muted">Nothing yet.</div>}
-
-          {myRequests.map((r) => (
-            <div key={r.id} className="listItem">
-              <div className="row between">
-                <div className="strong">{r.start_date} → {r.end_date}</div>
-                <span className={`status ${normalizeStatus(r.status)}`}>{normalizeStatus(r.status)}</span>
+  // ---------- AUTH SCREEN ----------
+  if (!session) {
+    return (
+      <div className="main">
+        <div className="container">
+          <div className="grid" style={{ maxWidth: 520, margin: "80px auto 0" }}>
+            <div className="card">
+              <div className="kpiRow" style={{ alignItems: "center" }}>
+                <div>
+                  <h1 className="h1" style={{ marginBottom: 6 }}>Welcome back</h1>
+                  <p className="sub">
+                    Sign in with your work email to access DayOff + BreakLock.
+                  </p>
+                </div>
+                <span className="pill" style={{ marginLeft: "auto" }}>Borsalino • Atica</span>
               </div>
-              <div className="muted">{r.reason}</div>
 
-              {normalizeStatus(r.status) === "pending" && (
-                <button className="btn danger" onClick={() => cancelMyRequest(r)}>
-                  Cancel
-                </button>
-              )}
+              <div style={{ marginTop: 14 }}>
+                <Auth
+                  supabaseClient={supabase}
+                  appearance={{ theme: ThemeSupa }}
+                  providers={[]}
+                  redirectTo={window.location.origin}
+                  magicLink={false}
+                />
+              </div>
+
+              <div style={{ marginTop: 14, color: "rgba(22,26,34,0.55)", fontSize: 12 }}>
+                Tip: Use Chrome on desktop for best push notification support.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="toastWrap">
+          {toasts.map((t) => (
+            <div className="toast" key={t.id}>
+              <div className="toastTitle">{t.title}</div>
+              <div className="toastMsg">{t.msg}</div>
             </div>
           ))}
         </div>
       </div>
+    );
+  }
 
-      {profile?.is_admin && (
-        <div className="card">
-          <div className="row between wrap">
-            <h3 className="h3">Admin approvals</h3>
-            <span className="chip">{pendingForAdmin.length} pending</span>
+  const name = (profile?.display_name || "").trim() || "there";
+  const orgLabel = org === "atica" ? "Atica" : "Borsalino";
+
+  return (
+    <BrowserRouter>
+      <div className="appShell">
+        {/* SIDEBAR */}
+        <aside className="sidebar">
+          <div className="brand">
+            <img className="brandLogo" src="/logo.png" alt="Logo" />
+            <div style={{ minWidth: 0 }}>
+              <h3 className="brandTitle">Internal Portal</h3>
+              <p className="brandSub">{orgLabel} • {isAdmin ? "Admin" : "Employee"}</p>
+            </div>
           </div>
 
-          <div className="list">
-            {pendingForAdmin.length === 0 && <div className="muted">No pending requests.</div>}
+          <div className="hr" />
 
-            {pendingForAdmin.map((r) => (
-              <div key={r.id} className="listItem">
-                <div className="row between">
-                  <div className="strong">{r.email}</div>
-                  <span className={`status ${normalizeStatus(r.status)}`}>{normalizeStatus(r.status)}</span>
-                </div>
-                <div className="muted">{r.start_date} → {r.end_date}</div>
-                <div className="muted">{r.reason}</div>
+          <div className="nav">
+            <NavItem to="/" label="Dashboard" />
+            <NavItem to="/dayoff" label="Day Off" />
+            <NavItem to="/breaklock" label="BreakLock" />
+            {isAdmin && <NavItem to="/breaklock/board" label="TV Board" right="Admin" />}
+            <NavItem to="/suggestions" label="Suggestions" />
+            <NavItem to="/settings" label="Settings" />
+          </div>
 
-                <div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
-                  <button className="btn primary" onClick={() => adminSetStatus(r, "approved")}>Approve</button>
-                  <button className="btn danger" onClick={() => adminSetStatus(r, "denied")}>Deny</button>
-                  <button className="btn warn" onClick={() => adminSetStatus(r, "revoked")}>Revoke</button>
-                </div>
+          <div className="hr" />
+
+          <div className="grid" style={{ gap: 10 }}>
+            <button className="btn" onClick={onEnablePush}>Enable notifications</button>
+            <button className="btn" onClick={onSendTestPush}>Send test push</button>
+            <button className="btn" onClick={() => supabase.auth.signOut()}>Log out</button>
+          </div>
+        </aside>
+
+        {/* MAIN */}
+        <main className="main">
+          <div className="container">
+            <div className="header">
+              <div>
+                <h1 className="h1">{greeting()}, {name}</h1>
+                <p className="sub">
+                  Everything you need — clean, fast, and simple.
+                </p>
+              </div>
+
+              <div className="actions">
+                <span className="pill">{orgLabel}</span>
+                <span className="pill">{isAdmin ? "Admin access" : "Employee access"}</span>
+              </div>
+            </div>
+
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <div className="grid2">
+                    <div className="card">
+                      <h2 className="h2">Quick actions</h2>
+                      <p className="sub">Start with what you came here to do.</p>
+                      <div className="kpiRow" style={{ marginTop: 12 }}>
+                        <Link className="btn btnPrimary" to="/dayoff" style={{ textDecoration: "none" }}>
+                          Request time off
+                        </Link>
+                        <Link className="btn" to="/breaklock" style={{ textDecoration: "none" }}>
+                          Open BreakLock
+                        </Link>
+                        <Link className="btn" to="/settings" style={{ textDecoration: "none" }}>
+                          Update profile
+                        </Link>
+                      </div>
+                    </div>
+
+                    <div className="card">
+                      <h2 className="h2">Your org</h2>
+                      <p className="sub">
+                        You’re currently on <b>{orgLabel}</b>. This controls which rules you see.
+                      </p>
+                      <p className="sub" style={{ marginTop: 10 }}>
+                        Change it any time in <b>Settings</b>.
+                      </p>
+                    </div>
+                  </div>
+                }
+              />
+
+              <Route
+                path="/dayoff"
+                element={<DayOffPage app={{ supabase, session, profile, isAdmin, org, pushToast }} />}
+              />
+
+              <Route
+                path="/breaklock"
+                element={<BreakLockPage app={{ supabase, session, profile, isAdmin, org, pushToast }} boardMode={false} />}
+              />
+
+              <Route
+                path="/breaklock/board"
+                element={
+                  isAdmin
+                    ? <BreakLockPage app={{ supabase, session, profile, isAdmin, org, pushToast }} boardMode />
+                    : <Navigate to="/breaklock" replace />
+                }
+              />
+
+              <Route
+                path="/suggestions"
+                element={<SuggestionsPage app={{ supabase, session, isAdmin, org, pushToast }} />}
+              />
+
+              <Route
+                path="/settings"
+                element={<SettingsPage app={{ supabase, session, profile, updateProfile, org, pushToast }} />}
+              />
+
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </div>
+
+          <div className="toastWrap">
+            {toasts.map((t) => (
+              <div className="toast" key={t.id}>
+                <div className="toastTitle">{t.title}</div>
+                <div className="toastMsg">{t.msg}</div>
               </div>
             ))}
           </div>
-        </div>
-      )}
-    </div>
+        </main>
+      </div>
+    </BrowserRouter>
   );
 }

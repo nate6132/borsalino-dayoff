@@ -1,125 +1,149 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 export default function SettingsPage({ app }) {
-  const { supabase, session, profile, setProfile } = app || {};
+  const { supabase, session, profile, updateProfile, org, pushToast } = app || {};
+
   const [name, setName] = useState(profile?.display_name || "");
-  const [org, setOrg] = useState(profile?.org || "");
-  const [password, setPassword] = useState("");
-  const [msg, setMsg] = useState("");
+  const [orgLocal, setOrgLocal] = useState(org || "borsalino");
+
+  const [pw1, setPw1] = useState("");
+  const [pw2, setPw2] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const email = session?.user?.email || "";
+  const canSaveName = name.trim().length >= 2;
+  const canSavePw = pw1.length >= 8 && pw1 === pw2;
+
+  const orgLabel = useMemo(() => (orgLocal === "atica" ? "Atica" : "Borsalino"), [orgLocal]);
+
   async function saveProfile() {
-    setMsg("");
-    const display_name = name.trim();
-    if (display_name.length < 2) return setMsg("Name must be at least 2 characters.");
-    if (org !== "borsalino" && org !== "atica") return setMsg("Pick Borsalino or Atica.");
-
-    setBusy(true);
-    const { error } = await supabase
-      .from("profiles")
-      .update({ display_name, org })
-      .eq("id", session.user.id);
-    setBusy(false);
-
-    if (error) return setMsg(error.message);
-
-    setProfile?.((p) => ({ ...(p || {}), display_name, org }));
-    setMsg("Saved ✅");
+    try {
+      setBusy(true);
+      await updateProfile({ display_name: name.trim(), org: orgLocal });
+      pushToast?.("Saved", `Updated profile • ${orgLabel}`);
+    } catch (e) {
+      console.error(e);
+      pushToast?.("Save failed", e?.message || "Could not save");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function changePassword() {
-    setMsg("");
-    if (password.length < 8) return setMsg("Password must be at least 8 characters.");
-
-    setBusy(true);
-    const { error } = await supabase.auth.updateUser({ password });
-    setBusy(false);
-
-    if (error) return setMsg(error.message);
-
-    setPassword("");
-    setMsg("Password updated ✅");
+    if (!canSavePw) return;
+    try {
+      setBusy(true);
+      const { error } = await supabase.auth.updateUser({ password: pw1 });
+      if (error) throw error;
+      setPw1(""); setPw2("");
+      pushToast?.("Password updated", "Done ✅");
+    } catch (e) {
+      console.error(e);
+      pushToast?.("Password failed", e?.message || "Could not change password");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function deleteAccount() {
-    const ok = confirm(
-      "This will permanently delete your account + your data. This cannot be undone. Continue?"
-    );
+    const ok = confirm("This will permanently delete your account. Are you sure?");
     if (!ok) return;
 
-    setBusy(true);
-    setMsg("");
+    try {
+      setBusy(true);
 
-    // Requires an Edge Function: delete-account (code below)
-    const { data, error } = await supabase.functions.invoke("delete-account", { body: {} });
+      // This requires the Edge Function below (delete-account).
+      const { data, error } = await supabase.functions.invoke("delete-account", {
+        body: { confirm: true },
+      });
 
-    setBusy(false);
+      if (error) throw error;
 
-    if (error) return setMsg(error.message || "Delete failed");
-
-    alert("Account deleted. Goodbye 👋");
-    await supabase.auth.signOut();
+      pushToast?.("Account deleted", "Signing out...");
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error(e);
+      pushToast?.("Delete failed", e?.message || "Edge Function returned non-2xx");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
-    <div className="stack">
+    <div className="grid2">
       <div className="card">
-        <h3 className="h3">Account</h3>
-        <p className="muted">Update your profile and company side.</p>
+        <h2 className="h2">Profile</h2>
+        <p className="sub">This is what people see inside the app.</p>
 
-        {msg && <div className="notice">{msg}</div>}
-
-        <div className="grid" style={{ marginTop: 12 }}>
+        <div className="grid" style={{ marginTop: 14 }}>
           <div>
-            <div className="label">Name</div>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+            <div className="label">Email</div>
+            <input className="input" value={email} disabled />
+          </div>
+
+          <div>
+            <div className="label">Display name</div>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Nate" />
           </div>
 
           <div>
             <div className="label">Company side</div>
-            <div className="seg">
-              <button type="button" className={org === "borsalino" ? "segBtn on" : "segBtn"} onClick={() => setOrg("borsalino")}>
-                Borsalino
-              </button>
-              <button type="button" className={org === "atica" ? "segBtn on" : "segBtn"} onClick={() => setOrg("atica")}>
-                Atica
+            <select className="select" value={orgLocal} onChange={(e) => setOrgLocal(e.target.value)}>
+              <option value="borsalino">Borsalino</option>
+              <option value="atica">Atica</option>
+            </select>
+            <p className="sub" style={{ marginTop: 8 }}>
+              This will control which DayOff/BreakLock rules apply.
+            </p>
+          </div>
+
+          <div className="actions">
+            <button className="btn btnPrimary" disabled={!canSaveName || busy} onClick={saveProfile}>
+              {busy ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid" style={{ gap: 14 }}>
+        <div className="card">
+          <h2 className="h2">Security</h2>
+          <p className="sub">Change your password.</p>
+
+          <div className="grid" style={{ marginTop: 14 }}>
+            <div>
+              <div className="label">New password</div>
+              <input className="input" type="password" value={pw1} onChange={(e) => setPw1(e.target.value)} />
+              <p className="sub" style={{ marginTop: 6 }}>Minimum 8 characters.</p>
+            </div>
+
+            <div>
+              <div className="label">Confirm new password</div>
+              <input className="input" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} />
+            </div>
+
+            <div className="actions">
+              <button className="btn btnPrimary" disabled={!canSavePw || busy} onClick={changePassword}>
+                {busy ? "Updating…" : "Update password"}
               </button>
             </div>
           </div>
         </div>
 
-        <button className="btn primary" onClick={saveProfile} disabled={busy} style={{ marginTop: 14 }}>
-          {busy ? "Saving…" : "Save changes"}
-        </button>
-      </div>
+        <div className="card">
+          <h2 className="h2">Danger zone</h2>
+          <p className="sub">Permanently delete your account.</p>
 
-      <div className="card">
-        <h3 className="h3">Password</h3>
-        <p className="muted">If you use email/password, you can change it here.</p>
+          <div className="actions" style={{ marginTop: 12 }}>
+            <button className="btn btnDanger" disabled={busy} onClick={deleteAccount}>
+              {busy ? "Working…" : "Delete my account"}
+            </button>
+          </div>
 
-        <div style={{ marginTop: 12 }}>
-          <div className="label">New password</div>
-          <input
-            className="input"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="At least 8 characters"
-          />
+          <p className="sub" style={{ marginTop: 10 }}>
+            This requires a server-side Edge Function for safety.
+          </p>
         </div>
-
-        <button className="btn" onClick={changePassword} disabled={busy} style={{ marginTop: 12 }}>
-          Update password
-        </button>
-      </div>
-
-      <div className="card dangerCard">
-        <h3 className="h3">Danger zone</h3>
-        <p className="muted">Delete your account permanently.</p>
-
-        <button className="btn danger" onClick={deleteAccount} disabled={busy}>
-          Delete my account
-        </button>
       </div>
     </div>
   );
